@@ -32,9 +32,7 @@ import org.slf4j.LoggerFactory;
  */
 public class RAMDataAccess extends AbstractDataAccess
 {
-
     private byte[][] segments = new byte[0][];
-    private boolean closed = false;
     private boolean store;
 
     RAMDataAccess( String name, String location, boolean store, ByteOrder order )
@@ -63,6 +61,7 @@ public class RAMDataAccess extends AbstractDataAccess
     {
         if (da instanceof RAMDataAccess)
         {
+            copyHeader(da);
             RAMDataAccess rda = (RAMDataAccess) da;
             // TODO PERFORMANCE we could reuse rda segments!
             rda.segments = new byte[segments.length][];
@@ -88,12 +87,12 @@ public class RAMDataAccess extends AbstractDataAccess
 
         // initialize transient values
         setSegmentSize(segmentSizeInBytes);
-        incCapacity(Math.max(10 * 4, bytes));
+        ensureCapacity(Math.max(10 * 4, bytes));
         return this;
     }
 
     @Override
-    public boolean incCapacity( long bytes )
+    public boolean ensureCapacity(long bytes)
     {
         if (bytes < 0)
             throw new IllegalArgumentException("new capacity has to be strictly positive");
@@ -130,7 +129,10 @@ public class RAMDataAccess extends AbstractDataAccess
         if (segments.length > 0)
             throw new IllegalStateException("already initialized");
 
-        if (!store || closed)
+        if (isClosed())
+            throw new IllegalStateException("already closed");
+
+        if (!store)
             return false;
 
         File file = new File(getFullName());
@@ -230,6 +232,26 @@ public class RAMDataAccess extends AbstractDataAccess
                     + ", segPower:" + segmentSizePower);
         }
         return bitUtil.toInt(segments[bufferIndex], index);
+    }
+
+    @Override
+    public final void setShort( long bytePos, short value )
+    {
+        assert segmentSizePower > 0 : "call create or loadExisting before usage!";
+        int bufferIndex = (int) (bytePos >>> segmentSizePower);
+        int index = (int) (bytePos & indexDivisor);
+        assert index + 2 <= segmentSizeInBytes : "integer cannot be distributed over two segments";
+        bitUtil.fromShort(segments[bufferIndex], value, index);
+    }
+
+    @Override
+    public final short getShort( long bytePos )
+    {
+        assert segmentSizePower > 0 : "call create or loadExisting before usage!";
+        int bufferIndex = (int) (bytePos >>> segmentSizePower);
+        int index = (int) (bytePos & indexDivisor);
+        assert index + 2 <= segmentSizeInBytes : "integer cannot be distributed over two segments";
+        return bitUtil.toShort(segments[bufferIndex], index);
     }
 
     @Override

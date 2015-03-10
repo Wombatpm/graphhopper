@@ -17,54 +17,56 @@
  */
 package com.graphhopper.routing.util;
 
-
 /**
  * Encodes and decodes a turn restriction and turn costs within a integer flag
  * <p>
- * @author karl.huebner
+ * @author Karl Hübner
  */
 public interface TurnCostEncoder
 {
     /**
-     * @return true, if, and only if it is encoded in flag 
+     * @return true, if the turn restriction is encoded in the specified flags
      */
-    boolean isTurnRestricted( long flag );
+    boolean isTurnRestricted( long flags );
 
     /**
-     * @return the costs in seconds encoded in flag 
+     * @return the costs encoded in the specified flag, if restricted it will be
+     * Double.POSITIVE_INFINITY
      */
-    int getTurnCosts( long flag );
-    
-    long getTurnFlags( boolean restriction, int costs );
+    double getTurnCost( long flags );
 
     /**
-     * whether turn costs nor turn restrictions will be encoded by this
-     * encoder, should be used for pedestrians  
+     * @param restricted true if restricted turn, equivalent to specifying of costs
+     * Double.POSITIVE_INFINITY
+     * @param costs the turn costs, specify 0 or Double.POSITIVE_INFINITY if restricted == true.
+     * Only used if restricted == false.
+     * @return the encoded flags
+     */
+    long getTurnFlags( boolean restricted, double costs );
+
+    /**
+     * whether turn costs nor turn restrictions will be encoded by this encoder, should be used for
+     * pedestrians
      */
     static class NoTurnCostsEncoder implements TurnCostEncoder
     {
 
         @Override
-        public boolean isTurnRestricted( long flag )
+        public boolean isTurnRestricted( long flags )
         {
             return false;
         }
 
         @Override
-        public int getTurnCosts( long flag )
+        public double getTurnCost( long flags )
         {
             return 0;
         }
 
         @Override
-        public long getTurnFlags( boolean restriction, int costs )
+        public long getTurnFlags( boolean restriction, double costs )
         {
             return 0;
         }
-
     }
-
-    
-
-
 }

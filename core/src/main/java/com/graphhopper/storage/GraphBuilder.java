@@ -31,6 +31,7 @@ public class GraphBuilder
     private boolean mmap;
     private boolean store;
     private boolean level;
+    private boolean elevation;
     private long byteCapacity = 100;
 
     public GraphBuilder( EncodingManager encodingManager )
@@ -43,7 +44,7 @@ public class GraphBuilder
      * <p/>
      * @see LevelGraph
      */
-    GraphBuilder setLevelGraph( boolean level )
+    public GraphBuilder setLevelGraph( boolean level )
     {
         this.level = level;
         return this;
@@ -73,6 +74,17 @@ public class GraphBuilder
         return this;
     }
 
+    public GraphBuilder set3D( boolean withElevation )
+    {
+        this.elevation = withElevation;
+        return this;
+    }
+
+    public boolean hasElevation()
+    {
+        return elevation;
+    }
+
     public LevelGraphStorage levelGraphBuild()
     {
         return (LevelGraphStorage) setLevelGraph(true).build();
@@ -91,24 +103,25 @@ public class GraphBuilder
      * Afterwards you'll need to call GraphStorage.create to have a useable object. Better use
      * create.
      */
-    GraphStorage build()
+    public GraphStorage build()
     {
         Directory dir;
         if (mmap)
-        {
             dir = new MMapDirectory(location);
-        } else
-        {
+        else
             dir = new RAMDirectory(location, store);
-        }
+
         GraphStorage graph;
         if (level)
+            graph = new LevelGraphStorage(dir, encodingManager, elevation);
+        else
         {
-            graph = new LevelGraphStorage(dir, encodingManager);
-        } else
-        {
-            graph = new GraphHopperStorage(dir, encodingManager);
+            if (encodingManager.needsTurnCostsSupport())
+                graph = new GraphHopperStorage(dir, encodingManager, elevation, new TurnCostExtension());
+            else
+                graph = new GraphHopperStorage(dir, encodingManager, elevation);
         }
+
         return graph;
     }
 

@@ -94,11 +94,17 @@ public interface EdgeIteratorState
 
     /**
      * Clones this EdgeIteratorState.
+     * <p>
+     * @param reverse if true a detached edgeState with reversed properties is created where base
+     * and adjacent nodes, flags and wayGeometry are in reversed order. See #162 for more details
+     * about why we need the new reverse parameter.
      */
-    EdgeIteratorState detach();
-    
+    EdgeIteratorState detach( boolean reverse );
+
     /**
-     * Copies the specified edge into the current one.
+     * Copies the properties of this edge into the specified edge. Does not change nodes!
+     * <p>
+     * @return the specified edge e
      */
-    void copyProperties(EdgeIteratorState edge);
+    EdgeIteratorState copyPropertiesTo( EdgeIteratorState e );
 }

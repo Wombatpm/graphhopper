@@ -58,6 +58,18 @@ class SynchedDAWrapper implements DataAccess
     }
 
     @Override
+    public synchronized void setShort( long bytePos, short value )
+    {
+        inner.setShort(bytePos, value);
+    }
+
+    @Override
+    public synchronized short getShort( long bytePos )
+    {
+        return inner.getShort(bytePos);
+    }
+
+    @Override
     public synchronized void setBytes( long bytePos, byte[] values, int length )
     {
         inner.setBytes(bytePos, values, length);
@@ -88,9 +100,9 @@ class SynchedDAWrapper implements DataAccess
     }
 
     @Override
-    public synchronized boolean incCapacity( long bytes )
+    public synchronized boolean ensureCapacity(long bytes)
     {
-        return inner.incCapacity(bytes);
+        return inner.ensureCapacity(bytes);
     }
 
     @Override
@@ -139,6 +151,12 @@ class SynchedDAWrapper implements DataAccess
     public synchronized void close()
     {
         inner.close();
+    }
+
+    @Override
+    public boolean isClosed()
+    {
+        return inner.isClosed();
     }
 
     @Override

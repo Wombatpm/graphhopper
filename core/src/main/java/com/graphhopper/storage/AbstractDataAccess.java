@@ -42,6 +42,7 @@ public abstract class AbstractDataAccess implements DataAccess
     protected transient int indexDivisor;
     protected final ByteOrder byteOrder;
     protected final BitUtil bitUtil;
+    protected transient boolean closed = false;
 
     public AbstractDataAccess( String name, String location, ByteOrder order )
     {
@@ -68,7 +69,14 @@ public abstract class AbstractDataAccess implements DataAccess
     @Override
     public void close()
     {
+        closed = true;
     }
+
+    @Override
+    public boolean isClosed()
+    {
+        return closed;
+    }        
 
     @Override
     public void setHeader( int bytePos, int value )
@@ -118,14 +126,19 @@ public abstract class AbstractDataAccess implements DataAccess
         return bytes;
     }
 
-    @Override
-    public DataAccess copyTo( DataAccess da )
+    protected void copyHeader( DataAccess da )
     {
         for (int h = 0; h < header.length * 4; h += 4)
         {
             da.setHeader(h, getHeader(h));
         }
-        da.incCapacity(getCapacity());
+    }
+
+    @Override
+    public DataAccess copyTo( DataAccess da )
+    {
+        copyHeader(da);
+        da.ensureCapacity(getCapacity());
         long cap = getCapacity();
         // currently get/setBytes does not support copying more bytes then segmentSize
         int segSize = Math.min(da.getSegmentSize(), getSegmentSize());

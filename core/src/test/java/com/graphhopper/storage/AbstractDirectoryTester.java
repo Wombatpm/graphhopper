@@ -49,23 +49,13 @@ public abstract class AbstractDirectoryTester
     }
 
     @Test
-    public void testRename()
-    {
-        Directory dir = createDir();
-        da = dir.find("testing");
-        da.create(100);
-        da.flush();
-        dir.rename(da, "newtesting");
-    }
-
-    @Test
     public void testRequestedDataAccessHasToBeTheIdenticalType()
     {
         Directory dir = createDir();
-        da = dir.find("testing", new DAType(DAType.MemRef.HEAP, false, false, false));
+        da = dir.find("testing", new DAType(DAType.MemRef.HEAP, false, false, false, false));
         try
         {
-            dir.find("testing", new DAType(DAType.MemRef.HEAP, false, false, true));
+            dir.find("testing", new DAType(DAType.MemRef.HEAP, false, false, false, true));
             assertFalse(true);
         } catch (Exception ex)
         {
@@ -76,8 +66,8 @@ public abstract class AbstractDirectoryTester
     public void testSynched()
     {
         Directory dir = createDir();
-        DataAccess da1 = dir.find("testing", new DAType(DAType.MemRef.HEAP, false, false, false));
-        da = dir.find("testing_synched", new DAType(DAType.MemRef.HEAP, false, false, true));
+        DataAccess da1 = dir.find("testing", new DAType(DAType.MemRef.HEAP, false, false, true, false));
+        da = dir.find("testing_synched", new DAType(DAType.MemRef.HEAP, false, false, true, true));
         assertFalse(da.getClass() == da1.getClass());
         da1.close();
     }

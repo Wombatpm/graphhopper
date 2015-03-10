@@ -17,9 +17,11 @@
  */
 package com.graphhopper.routing;
 
+import com.graphhopper.routing.util.DefaultEdgeFilter;
 import com.graphhopper.routing.util.FlagEncoder;
 import com.graphhopper.storage.EdgeEntry;
 import com.graphhopper.storage.Graph;
+import com.graphhopper.storage.NodeAccess;
 import com.graphhopper.util.*;
 import gnu.trove.list.TIntList;
 import gnu.trove.list.array.TIntArrayList;
@@ -33,9 +35,11 @@ import java.util.List;
  * <p/>
  * @author Peter Karich
  * @author Ottavio Campana
+ * @author jan soe
  */
 public class Path
 {
+    private static final AngleCalc ac = new AngleCalc();
     protected Graph graph;
     private FlagEncoder encoder;
     protected double distance;
@@ -48,14 +52,14 @@ public class Path
     private int fromNode = -1;
     protected int endNode = -1;
     private TIntList edgeIds;
-    private PointList cachedPoints;
-    private InstructionList cachedWays;
     private double weight;
+    private NodeAccess nodeAccess;
 
     public Path( Graph graph, FlagEncoder encoder )
     {
         this.weight = Double.MAX_VALUE;
         this.graph = graph;
+        this.nodeAccess = graph.getNodeAccess();
         this.encoder = encoder;
         this.edgeIds = new TIntArrayList();
     }
@@ -67,7 +71,7 @@ public class Path
     {
         this(p.graph, p.encoder);
         weight = p.weight;
-        edgeIds = new TIntArrayList(edgeIds);
+        edgeIds = new TIntArrayList(p.edgeIds);
         edgeEntry = p.edgeEntry;
     }
 
@@ -102,7 +106,7 @@ public class Path
      */
     private int getFromNode()
     {
-        if (!EdgeIterator.Edge.isValid(fromNode))
+        if (fromNode < 0)
             throw new IllegalStateException("Call extract() before retrieving fromNode");
 
         return fromNode;
@@ -152,9 +156,10 @@ public class Path
         return weight;
     }
 
-    public void setWeight( double w )
+    public Path setWeight( double w )
     {
         this.weight = w;
+        return this;
     }
 
     /**
@@ -162,16 +167,19 @@ public class Path
      */
     public Path extract()
     {
+        if (isFound())
+            throw new IllegalStateException("Extract can only be called once");
+
         extractSW.start();
         EdgeEntry goalEdge = edgeEntry;
-        setEndNode(goalEdge.endNode);
+        setEndNode(goalEdge.adjNode);
         while (EdgeIterator.Edge.isValid(goalEdge.edge))
         {
-            processEdge(goalEdge.edge, goalEdge.endNode);
+            processEdge(goalEdge.edge, goalEdge.adjNode);
             goalEdge = goalEdge.parent;
         }
 
-        setFromNode(goalEdge.endNode);
+        setFromNode(goalEdge.adjNode);
         reverseOrder();
         extractSW.stop();
         return setFound(true);
@@ -193,34 +201,38 @@ public class Path
     /**
      * Calls getDistance and adds the edgeId.
      */
-    protected void processEdge( int edgeId, int endNode )
+    protected void processEdge( int edgeId, int adjNode )
     {
-        EdgeIteratorState iter = graph.getEdgeProps(edgeId, endNode);
-        double dist = calcDistance(iter);
+        EdgeIteratorState iter = graph.getEdgeProps(edgeId, adjNode);
+        double dist = iter.getDistance();
         distance += dist;
-        millis += calcMillis(dist, iter.getFlags());
+        millis += calcMillis(dist, iter.getFlags(), false);
         addEdge(edgeId);
-    }
-
-    /**
-     * This method returns the distance in meter for the specified edge.
-     */
-    protected double calcDistance( EdgeIteratorState iter )
-    {
-        return iter.getDistance();
     }
 
     /**
      * Calculates the time in millis for the specified distance in meter and speed (in km/h) via
      * flags.
      */
-    protected long calcMillis( double distance, long flags )
+    protected long calcMillis( double distance, long flags, boolean revert )
     {
-        return (long) (distance * 3600 / encoder.getSpeed(flags));
+        if (revert && !encoder.isBackward(flags)
+                || !revert && !encoder.isForward(flags))
+            throw new IllegalStateException("Calculating time should not require to read speed from edge in wrong direction. "
+                    + "Reverse:" + revert + ", fwd:" + encoder.isForward(flags) + ", bwd:" + encoder.isBackward(flags));
+
+        double speed = revert ? encoder.getReverseSpeed(flags) : encoder.getSpeed(flags);
+        if (Double.isInfinite(speed) || Double.isNaN(speed) || speed < 0)
+            throw new IllegalStateException("Invalid speed stored in edge! " + speed);
+
+        if (speed == 0)
+            throw new IllegalStateException("Speed cannot be 0 for unblocked edge, use access properties to mark edge blocked! Should only occur for shortest path calculation. See #242.");
+
+        return (long) (distance * 3600 / speed);
     }
 
     /**
-     * Used in combination with forEveryEdge.
+     * The callback used in forEveryEdge.
      */
     private static interface EdgeVisitor
     {
@@ -228,7 +240,11 @@ public class Path
     }
 
     /**
-     * Iterates over all edges in this path and calls the visitor for it.
+     * Iterates over all edges in this path sorted from start to end and calls the visitor callback
+     * for every edge.
+     * <p>
+     * @param visitor callback to handle every edge. The edge is decoupled from the iterator and can
+     * be stored.
      */
     private void forEveryEdge( EdgeVisitor visitor )
     {
@@ -238,16 +254,19 @@ public class Path
         {
             EdgeIteratorState edgeBase = graph.getEdgeProps(edgeIds.get(i), tmpNode);
             if (edgeBase == null)
-            {
-                throw new IllegalStateException("Edge " + edgeIds.get(i)
-                        + " was empty when requested with node " + tmpNode
+                throw new IllegalStateException("Edge " + edgeIds.get(i) + " was empty when requested with node " + tmpNode
                         + ", array index:" + i + ", edges:" + edgeIds.size());
-            }
+
             tmpNode = edgeBase.getBaseNode();
+            // more efficient swap, currently not implemented for virtual edges: visitor.next(edgeBase.detach(true), i);
+            edgeBase = graph.getEdgeProps(edgeBase.getEdge(), tmpNode);
             visitor.next(edgeBase, i);
         }
     }
 
+    /**
+     * Returns the list of all edges.
+     */
     public List<EdgeIteratorState> calcEdges()
     {
         final List<EdgeIteratorState> edges = new ArrayList<EdgeIteratorState>(edgeIds.size());
@@ -272,7 +291,13 @@ public class Path
     {
         final TIntArrayList nodes = new TIntArrayList(edgeIds.size() + 1);
         if (edgeIds.isEmpty())
+        {
+            if (isFound())
+            {
+                nodes.add(endNode);
+            }
             return nodes;
+        }
 
         int tmpNode = getFromNode();
         nodes.add(tmpNode);
@@ -281,53 +306,60 @@ public class Path
             @Override
             public void next( EdgeIteratorState eb, int i )
             {
-                nodes.add(eb.getBaseNode());
+                nodes.add(eb.getAdjNode());
             }
         });
         return nodes;
     }
 
     /**
-     * @return the cached list of lat,lon for this path
+     * This method calculated a list of points for this path
+     * <p>
+     * @return this path its geometry
      */
     public PointList calcPoints()
     {
-        if (cachedPoints != null)
-            return cachedPoints;
-
-        cachedPoints = new PointList(edgeIds.size() + 1);
+        final PointList points = new PointList(edgeIds.size() + 1, nodeAccess.is3D());
         if (edgeIds.isEmpty())
-            return cachedPoints;
+        {
+            if (isFound())
+            {
+                points.add(graph.getNodeAccess(), endNode);
+            }
+            return points;
+        }
 
         int tmpNode = getFromNode();
-        cachedPoints.add(graph.getLatitude(tmpNode), graph.getLongitude(tmpNode));
+        points.add(nodeAccess, tmpNode);
         forEveryEdge(new EdgeVisitor()
         {
             @Override
-            public void next( EdgeIteratorState eb, int i )
+            public void next( EdgeIteratorState eb, int index )
             {
-                PointList pl = eb.fetchWayGeometry(1);
-                pl.reverse();
+                PointList pl = eb.fetchWayGeometry(2);
                 for (int j = 0; j < pl.getSize(); j++)
                 {
-                    cachedPoints.add(pl.getLatitude(j), pl.getLongitude(j));
+                    points.add(pl, j);
                 }
             }
         });
-        return cachedPoints;
+        return points;
     }
 
     /**
-     * @return the cached list of ways for this path
+     * @return the list of instructions for this path.
      */
-    public InstructionList calcInstructions()
+    public InstructionList calcInstructions( final Translation tr )
     {
-        if (cachedWays != null)
-            return cachedWays;
-
-        cachedWays = new InstructionList(edgeIds.size() / 4);
+        final InstructionList ways = new InstructionList(edgeIds.size() / 4, tr);
         if (edgeIds.isEmpty())
-            return cachedWays;
+        {
+            if (isFound())
+            {
+                ways.add(new FinishInstruction(nodeAccess, endNode));
+            }
+            return ways;
+        }
 
         final int tmpNode = getFromNode();
         forEveryEdge(new EdgeVisitor()
@@ -352,147 +384,229 @@ public class Path
              * considering orientation belonging to the interval
              * [ - pi + previousOrientation , + pi + previousOrientation ]
              */
-            private double prevLat = graph.getLatitude(tmpNode);
-            private double prevLon = graph.getLongitude(tmpNode);
+            private double prevLat = nodeAccess.getLatitude(tmpNode);
+            private double prevLon = nodeAccess.getLongitude(tmpNode);
+            private double doublePrevLat, doublePrevLong; // Lat and Lon of node t-2
+            private int prevNode = -1;
             private double prevOrientation;
             private Instruction prevInstruction;
-            private PointList points = new PointList();
-            private String name = null;
-            private int pavementCode;
-            private int wayTypeCode;
+            private boolean prevInRoundabout = false;
+            private String name, prevName = null;
+            private InstructionAnnotation annotation, prevAnnotation;
+            private EdgeExplorer outEdgeExplorer = graph.createEdgeExplorer(new DefaultEdgeFilter(encoder, false, true));
 
             @Override
             public void next( EdgeIteratorState edge, int index )
             {
-                // Hmmh, a bit ugly: the 'edge' points to the previous node of the path!
-                // Ie. baseNode is the current node and adjNode is the previous.
+                // baseNode is the current node and adjNode is the next
+                int adjNode = edge.getAdjNode();
                 int baseNode = edge.getBaseNode();
-                double baseLat = graph.getLatitude(baseNode);
-                double baseLon = graph.getLongitude(baseNode);
+                long flags = edge.getFlags();
+                double adjLat = nodeAccess.getLatitude(adjNode);
+                double adjLon = nodeAccess.getLongitude(adjNode);
                 double latitude, longitude;
+
                 PointList wayGeo = edge.fetchWayGeometry(3);
+                boolean isRoundabout = encoder.isBool(flags, encoder.K_ROUNDABOUT);
+
                 if (wayGeo.getSize() <= 2)
                 {
-                    latitude = baseLat;
-                    longitude = baseLon;
+                    latitude = adjLat;
+                    longitude = adjLon;
                 } else
                 {
-                    int adjNode = edge.getAdjNode();
-                    prevLat = graph.getLatitude(adjNode);
-                    prevLon = graph.getLongitude(adjNode);
-                    latitude = wayGeo.getLatitude(wayGeo.getSize() - 2);
-                    longitude = wayGeo.getLongitude(wayGeo.getSize() - 2);
+                    latitude = wayGeo.getLatitude(1);
+                    longitude = wayGeo.getLongitude(1);
+                    assert java.lang.Double.compare(prevLat, nodeAccess.getLatitude(baseNode)) == 0;
+                    assert java.lang.Double.compare(prevLon, nodeAccess.getLongitude(baseNode)) == 0;
                 }
 
-                double orientation = Math.atan2(latitude - prevLat, longitude - prevLon);
-                if (name == null)
+                name = edge.getName();
+                annotation = encoder.getAnnotation(flags, tr);
+
+                if ((prevName == null) && (!isRoundabout)) // very first instruction (if not in Roundabout)
                 {
-                    // very first instruction
-                    name = edge.getName();
-                    pavementCode = encoder.getPavementCode(edge.getFlags());
-                    wayTypeCode = encoder.getWayTypeCode(edge.getFlags());
-                    prevInstruction = new Instruction(Instruction.CONTINUE_ON_STREET, name, wayTypeCode, pavementCode, points);
-                    updatePointsAndInstruction(edge, wayGeo);
-                    cachedWays.add(prevInstruction);
+                    int sign = Instruction.CONTINUE_ON_STREET;
+                    prevInstruction = new Instruction(sign, name, annotation, new PointList(10, nodeAccess.is3D()));
+                    ways.add(prevInstruction);
+                    prevName = name;
+                    prevAnnotation = annotation;
+
                 } else
                 {
-                    double tmpOrientation;
-                    if (prevOrientation >= 0)
+                    if (isRoundabout)
+                    // remark: names and annotations within roundabout are ignored
                     {
-                        if (orientation < -Math.PI + prevOrientation)
-                            tmpOrientation = orientation + 2 * Math.PI;
-                        else
-                            tmpOrientation = orientation;
+                        if (!prevInRoundabout) //just entered roundabout
+                        {
+                            int sign = Instruction.USE_ROUNDABOUT;
+                            RoundaboutInstruction roundaboutInstruction = new RoundaboutInstruction(sign, name,
+                                    annotation, new PointList(10, nodeAccess.is3D()));
+                            if (prevName != null)
+                            {
+                                // check if there is an exit at the same node the roundabout was entered
+                                EdgeIterator edgeIter = outEdgeExplorer.setBaseNode(baseNode);
+                                while (edgeIter.next()) 
+                                {
+                                    if ((edgeIter.getAdjNode() != prevNode) 
+                                         && !encoder.isBool(edgeIter.getFlags(), FlagEncoder.K_ROUNDABOUT))
+                                    {
+                                        roundaboutInstruction.increaseExitNumber();
+                                        break;
+                                    }
+                                }
 
-                    } else
-                    {
-                        if (orientation > +Math.PI + prevOrientation)
-                            tmpOrientation = orientation - 2 * Math.PI;
-                        else
-                            tmpOrientation = orientation;
-                    }
+                                // previous orientation is last orientation before entering roundabout
+                                prevOrientation = ac.calcOrientation(doublePrevLat, doublePrevLong, prevLat, prevLon);
 
-                    String tmpName = edge.getName();
-                    int tmpPavement = encoder.getPavementCode(edge.getFlags());
-                    int tmpWayType = encoder.getWayTypeCode(edge.getFlags());
-                    if ((!name.equals(tmpName))
-                            || (pavementCode != tmpPavement)
-                            || (wayTypeCode != tmpWayType))
+                                // calculate direction of entrance turn to determine direction of rotation
+                                // right turn == counterclockwise and vice versa
+                                double orientation = ac.calcOrientation(prevLat, prevLon, latitude, longitude);
+                                orientation = ac.alignOrientation(prevOrientation, orientation);
+                                double delta = (orientation - prevOrientation);
+                                roundaboutInstruction.setDirOfRotation(delta);
+
+                            } else // first instructions is roundabout instruction
+                            {
+                                prevOrientation = ac.calcOrientation(prevLat, prevLon, latitude, longitude);
+                                prevName = name;
+                                prevAnnotation = annotation;
+                            }
+                            prevInstruction = roundaboutInstruction;
+                            ways.add(prevInstruction);
+                        }
+
+                        // Add passed exits to instruction. A node is countet if there is at least one outgoing edge
+                        // out of the roundabout
+                        EdgeIterator edgeIter = outEdgeExplorer.setBaseNode(adjNode);
+                        while (edgeIter.next())
+                        {
+                            if (!encoder.isBool(edgeIter.getFlags(), encoder.K_ROUNDABOUT))
+                            {
+                                ((RoundaboutInstruction) prevInstruction).increaseExitNumber();
+                                break;
+                            }
+                        }
+
+                    } else if (prevInRoundabout) //previously in roundabout but not anymore
                     {
-                        points = new PointList();                        
-                        name = tmpName;
-                        pavementCode = tmpPavement;
-                        wayTypeCode = tmpWayType;
-                        double delta = Math.abs(tmpOrientation - prevOrientation);
-                        int indication;
-                        if (delta < 0.2)
+
+                        prevInstruction.setName(name);
+
+                        // calc angle between roundabout entrance and exit
+                        double orientation = ac.calcOrientation(prevLat, prevLon, latitude, longitude);
+                        orientation = ac.alignOrientation(prevOrientation, orientation);
+                        double deltaInOut = (orientation - prevOrientation);
+
+                        // calculate direction of exit turn to determine direction of rotation
+                        // right turn == counterclockwise and vice versa
+                        double recentOrientation = ac.calcOrientation(doublePrevLat, doublePrevLong, prevLat, prevLon);
+                        orientation = ac.alignOrientation(recentOrientation, orientation);
+                        double deltaOut = (orientation - recentOrientation);
+
+                        prevInstruction = ((RoundaboutInstruction) prevInstruction)
+                                .setRadian(deltaInOut)
+                                .setDirOfRotation(deltaOut)
+                                .setExited();
+
+                        prevName = name;
+                        prevAnnotation = annotation;
+
+                    } else if ((!name.equals(prevName)) || (!annotation.equals(prevAnnotation)))
+                    {
+                        prevOrientation = ac.calcOrientation(doublePrevLat, doublePrevLong, prevLat, prevLon);
+                        double orientation = ac.calcOrientation(prevLat, prevLon, latitude, longitude);
+                        orientation = ac.alignOrientation(prevOrientation, orientation);
+                        double delta = orientation - prevOrientation;
+                        double absDelta = Math.abs(delta);
+                        int sign;
+
+                        if (absDelta < 0.2)
                         {
                             // 0.2 ~= 11°
-                            indication = Instruction.CONTINUE_ON_STREET;
+                            sign = Instruction.CONTINUE_ON_STREET;
 
-                        } else if (delta < 0.8)
+                        } else if (absDelta < 0.8)
                         {
                             // 0.8 ~= 40°
-                            if (tmpOrientation > prevOrientation)
-                                indication = Instruction.TURN_SLIGHT_LEFT;
+                            if (delta > 0)
+                                sign = Instruction.TURN_SLIGHT_LEFT;
                             else
-                                indication = Instruction.TURN_SLIGHT_RIGHT;
+                                sign = Instruction.TURN_SLIGHT_RIGHT;
 
-                        } else if (delta < 1.8)
+                        } else if (absDelta < 1.8)
                         {
                             // 1.8 ~= 103°
-                            if (tmpOrientation > prevOrientation)
-                                indication = Instruction.TURN_LEFT;
+                            if (delta > 0)
+                                sign = Instruction.TURN_LEFT;
                             else
-                                indication = Instruction.TURN_RIGHT;
+                                sign = Instruction.TURN_RIGHT;
 
                         } else
                         {
-                            if (tmpOrientation > prevOrientation)
-                                indication = Instruction.TURN_SHARP_LEFT;
+                            if (delta > 0)
+                                sign = Instruction.TURN_SHARP_LEFT;
                             else
-                                indication = Instruction.TURN_SHARP_RIGHT;
+                                sign = Instruction.TURN_SHARP_RIGHT;
 
                         }
-
-                        prevInstruction = new Instruction(indication, name, wayTypeCode, pavementCode, points);
-                        cachedWays.add(prevInstruction);
-                    } 
-                    
-                    updatePointsAndInstruction(edge, wayGeo);                    
+                        prevInstruction = new Instruction(sign, name, annotation, new PointList(10, nodeAccess.is3D()));
+                        ways.add(prevInstruction);
+                        prevName = name;
+                        prevAnnotation = annotation;
+                    }
                 }
 
-                prevLat = baseLat;
-                prevLon = baseLon;
+                updatePointsAndInstruction(edge, wayGeo);
+
                 if (wayGeo.getSize() <= 2)
-                    prevOrientation = orientation;
-                else
-                    prevOrientation = Math.atan2(baseLat - wayGeo.getLatitude(1), baseLon - wayGeo.getLongitude(1));
+                {
+                    doublePrevLat = prevLat;
+                    doublePrevLong = prevLon;
+                } else
+                {
+                    int beforeLast = wayGeo.getSize() - 2;
+                    doublePrevLat = wayGeo.getLatitude(beforeLast);
+                    doublePrevLong = wayGeo.getLongitude(beforeLast);
+                }
+                
+                prevInRoundabout = isRoundabout;
+                prevNode = baseNode;
+                prevLat = adjLat;
+                prevLon = adjLon;
 
                 boolean lastEdge = index == edgeIds.size() - 1;
                 if (lastEdge)
-                    cachedWays.add(new FinishInstruction(prevLat, prevLon));                
+                {
+                    if (isRoundabout)
+                    {
+                        // calc angle between roundabout entrance and finish
+                        double orientation = ac.calcOrientation(doublePrevLat, doublePrevLong, prevLat, prevLon);
+                        orientation = ac.alignOrientation(prevOrientation, orientation);
+                        double delta = (orientation - prevOrientation);
+                        ((RoundaboutInstruction) prevInstruction).setRadian(delta);
+
+                    }
+                    ways.add(new FinishInstruction(nodeAccess, adjNode));
+                }
             }
 
             private void updatePointsAndInstruction( EdgeIteratorState edge, PointList pl )
             {
-                // add points in opposite direction as adj node is previous
-                // skip base point => 'i > 0'
+                // skip adjNode
                 int len = pl.size() - 1;
-                long flags = edge.getFlags();
-                for (int i = len; i > 0; i--)
+                for (int i = 0; i < len; i++)
                 {
-                    double lat = pl.getLatitude(i);
-                    double lon = pl.getLongitude(i);
-                    points.add(lat, lon);
+                    prevInstruction.getPoints().add(pl, i);
                 }
-                double dist = calcDistance(edge);
-                prevInstruction.setDistance(dist + prevInstruction.getDistance());
-                prevInstruction.setMillis(calcMillis(dist, flags) + prevInstruction.getMillis());
+                double newDist = edge.getDistance();
+                prevInstruction.setDistance(newDist + prevInstruction.getDistance());
+                long flags = edge.getFlags();
+                prevInstruction.setTime(calcMillis(newDist, flags, false) + prevInstruction.getTime());
             }
         });
 
-        return cachedWays;
+        return ways;
     }
 
     @Override
@@ -511,6 +625,6 @@ public class Path
 
             str += edgeIds.get(i);
         }
-        return toString() + ", " + str;
+        return toString() + ", found:" + isFound() + ", " + str;
     }
 }

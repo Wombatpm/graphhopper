@@ -17,11 +17,16 @@
  */
 package com.graphhopper.util;
 
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class Instruction
 {
-    private static final DistanceCalc distanceCalc = new DistanceCalcEarth();
+    private static final AngleCalc ac = new AngleCalc();
+
+    public static final int LEAVE_ROUNDABOUT = -6; // for future use
     public static final int TURN_SHARP_LEFT = -3;
     public static final int TURN_LEFT = -2;
     public static final int TURN_SLIGHT_LEFT = -1;
@@ -30,49 +35,59 @@ public class Instruction
     public static final int TURN_RIGHT = 2;
     public static final int TURN_SHARP_RIGHT = 3;
     public static final int FINISH = 4;
-    private final int indication;
-    private final String name;
-    private double distance;
-    private long millis;
-    private final PointList points;
-    private final int pavementType;
-    private final int waytype;
+    public static final int REACHED_VIA = 5;
+    public static final int USE_ROUNDABOUT = 6;
+
+    protected int sign;
+    protected String name;
+    protected double distance;
+    protected long time;
+    protected final PointList points;
+    protected final InstructionAnnotation annotation;
 
     /**
      * The points, distances and times have exactly the same count. The last point of this
-     * instruction is not duplicated here and should be in the next one. The first distance and time
-     * entries are measured between the first point and the second one etc.
+     * instruction is not duplicated here and should be in the next one.
      */
-    public Instruction( int indication, String name, int waytype, int pavementType, PointList pl )
+    public Instruction( int sign, String name, InstructionAnnotation ia, PointList pl)
     {
-        this.indication = indication;
+        this.sign = sign;
         this.name = name;
         this.points = pl;
-        this.waytype = waytype;
-        this.pavementType = pavementType;
+        this.annotation = ia;
     }
 
-    public int getPavement()
+    public InstructionAnnotation getAnnotation()
     {
-        return pavementType;
-    }
-
-    public int getWayType()
-    {
-        return waytype;
-    }
-
-    public int getIndication()
-    {
-        return indication;
+        return annotation;
     }
 
     /**
      * The instruction for the person/driver to execute.
      */
+    public int getSign()
+    {
+        return sign;
+    }
+
     public String getName()
     {
         return name;
+    }
+
+    public void setName(String name)
+    {
+        this.name = name;
+    }
+
+    public Map<String,Object> getExtraInfoJSON()
+    {
+        return Collections.<String, Object>emptyMap();
+    }
+
+    public void setExtraInfo(String key, Object value)
+    {
+        throw new IllegalArgumentException("Key" + key + " is not a valid option");
     }
 
     public Instruction setDistance( double distance )
@@ -89,18 +104,18 @@ public class Instruction
         return distance;
     }
 
-    public Instruction setMillis( long millis )
+    public Instruction setTime( long time )
     {
-        this.millis = millis;
+        this.time = time;
         return this;
     }
-    
+
     /**
-     * Time in millis until no new instruction
+     * Time in time until no new instruction
      */
-    public long getMillis()
+    public long getTime()
     {
-        return millis;
+        return time;
     }
 
     /**
@@ -119,43 +134,53 @@ public class Instruction
         return points.getLongitude(0);
     }
 
-    double getLastLat()
+    double getFirstEle()
     {
-        return points.getLatitude(points.size() - 1);
+        return points.getElevation(0);
     }
 
-    double getLastLon()
+    public PointList getPoints()
     {
-        return points.getLongitude(points.size() - 1);
+        return points;
     }
 
     /**
-     * This method returns a list of gpx entries where the time (in millis) is relative to the first
+     * This method returns a list of gpx entries where the time (in time) is relative to the first
      * which is 0. It does NOT contain the last point which is the first of the next instruction.
      * <p>
      * @return the time offset to add for the next instruction
      */
-    public long fillGPXList( List<GPXEntry> list, long time, double prevFactor, double prevLat, double prevLon )
+    long fillGPXList( List<GPXEntry> list, long time,
+            Instruction prevInstr, Instruction nextInstr, boolean firstInstr )
     {
+        checkOne();
         int len = points.size();
+        long prevTime = time;
+        double lat = points.getLatitude(0);
+        double lon = points.getLongitude(0);
+        double ele = Double.NaN;
+        boolean is3D = points.is3D();
+        if (is3D)
+            ele = points.getElevation(0);
+
         for (int i = 0; i < len; i++)
         {
-            double lat = points.getLatitude(i);
-            double lon = points.getLongitude(i);
-            if (!Double.isNaN(prevLat))
-            {
-                // Here we assume that the same speed is used until the next instruction.
-                // If we would calculate all the distances (and times) up front there
-                // would be a problem where the air-line distance is not the distance returned from the edge
-                // e.g. in the case if we include elevation data                
-                time += distanceCalc.calcDist(prevLat, prevLon, lat, lon) / prevFactor;
-            }
-            list.add(new GPXEntry(lat, lon, time));
-            prevFactor = distance / millis;
-            prevLat = lat;
-            prevLon = lon;
+            list.add(new GPXEntry(lat, lon, ele, prevTime));
+
+            boolean last = i + 1 == len;
+            double nextLat = last ? nextInstr.getFirstLat() : points.getLatitude(i + 1);
+            double nextLon = last ? nextInstr.getFirstLon() : points.getLongitude(i + 1);
+            double nextEle = is3D ? (last ? nextInstr.getFirstEle() : points.getElevation(i + 1)) : Double.NaN;
+            if (is3D)
+                prevTime = Math.round(prevTime + this.time * Helper.DIST_3D.calcDist(nextLat, nextLon, nextEle, lat, lon, ele) / distance);
+            else
+                prevTime = Math.round(prevTime + this.time * Helper.DIST_3D.calcDist(nextLat, nextLon, lat, lon) / distance);
+
+            lat = nextLat;
+            lon = nextLon;
+            ele = nextEle;
         }
-        return time;
+        return time + this.time;
     }
 
     @Override
@@ -163,14 +188,103 @@ public class Instruction
     {
         StringBuilder sb = new StringBuilder();
         sb.append('(');
-        sb.append(indication);
-        sb.append(',');
-        sb.append(name);
-        sb.append(',');
-        sb.append(distance);
-        sb.append(',');
-        sb.append(millis);
+        sb.append(sign).append(',');
+        sb.append(name).append(',');
+        sb.append(distance).append(',');
+        sb.append(time);
         sb.append(')');
         return sb.toString();
+    }
+
+    /**
+     * Return the direction like 'NE' based on the first tracksegment of the instruction. If
+     * Instruction does not contain enough coordinate points, an empty string will be returned.
+     */
+    String calcDirection( Instruction nextI )
+    {
+        double azimuth = calcAzimuth(nextI);
+        if (Double.isNaN(azimuth))
+            return "";
+
+        return ac.azimuth2compassPoint(azimuth);
+    }
+
+    /**
+     * Return the azimuth in degree based on the first tracksegment of the instruction. If
+     * Instruction does not contain enough coordinate points, an empty string will be returned.
+     */
+    public double calcAzimuth( Instruction nextI )
+    {
+        double nextLat;
+        double nextLon;
+
+        if (points.getSize() >= 2)
+        {
+            nextLat = points.getLatitude(1);
+            nextLon = points.getLongitude(1);
+        } else if (nextI != null && points.getSize() == 1)
+        {
+            nextLat = nextI.points.getLatitude(0);
+            nextLon = nextI.points.getLongitude(0);
+        } else
+        {
+            return Double.NaN;
+        }
+
+        double lat = points.getLatitude(0);
+        double lon = points.getLongitude(0);
+        return ac.calcAzimuth(lat, lon, nextLat, nextLon);
+    }
+
+    void checkOne()
+    {
+        if (points.size() < 1)
+            throw new IllegalStateException("Instruction must contain at least one point " + toString());
+    }
+
+    public String getTurnDescription( Translation tr )
+    {
+        String str;
+        String streetName = getName();
+        int indi = getSign();
+        if (indi == Instruction.FINISH)
+        {
+            str = tr.tr("finish");
+        } else if (indi == Instruction.REACHED_VIA)
+        {
+            str = tr.tr("stopover", ((FinishInstruction) this).getViaPosition());
+        } else if (indi == Instruction.CONTINUE_ON_STREET)
+        {
+            str = Helper.isEmpty(streetName) ? tr.tr("continue") : tr.tr("continue_onto", streetName);
+        } else
+        {
+            String dir = null;
+            switch (indi)
+            {
+                case Instruction.TURN_SHARP_LEFT:
+                    dir = tr.tr("turn_sharp_left");
+                    break;
+                case Instruction.TURN_LEFT:
+                    dir = tr.tr("turn_left");
+                    break;
+                case Instruction.TURN_SLIGHT_LEFT:
+                    dir = tr.tr("turn_slight_left");
+                    break;
+                case Instruction.TURN_SLIGHT_RIGHT:
+                    dir = tr.tr("turn_slight_right");
+                    break;
+                case Instruction.TURN_RIGHT:
+                    dir = tr.tr("turn_right");
+                    break;
+                case Instruction.TURN_SHARP_RIGHT:
+                    dir = tr.tr("turn_sharp_right");
+                    break;
+            }
+            if (dir == null)
+                throw new IllegalStateException("Turn indication not found " + indi);
+
+            str = Helper.isEmpty(streetName) ? dir : tr.tr("turn_onto", dir, streetName);
+        }
+        return str;
     }
 }

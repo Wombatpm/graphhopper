@@ -17,7 +17,6 @@
  */
 package com.graphhopper.storage;
 
-import static com.graphhopper.storage.AbstractDataAccess.HEADER_OFFSET;
 import com.graphhopper.util.NotThreadSafe;
 import java.io.File;
 import java.io.IOException;
@@ -32,9 +31,9 @@ import java.nio.ByteOrder;
  * <p>
  * 1. Highly experimental. Still some bugs and access through file/MMAP should work at some point
  * <p>
- * 2. Compared to MMAP no syncDAWrapper is need to make it safe from multiple threads
+ * 2. Compared to MMAP no syncDAWrapper is need to make it read and write safe from multiple threads
  * <p>
- * 3. Cannot be used on Android I think
+ * 3. Cannot be used on Android as no memory allocation methods are available there
  * <p/>
  * @author Peter Karich
  */
@@ -47,7 +46,7 @@ public class UnsafeDataAccess extends AbstractDataAccess
     static
     {
         try
-        {                           
+        {
             // On Android getting Unsafe fails as the field is named THE_ONE but Android has no memory allocation methods so it won't work nevertheless.
             // On Android we need JNI+malloc https://github.com/libgdx/libgdx/blob/5945211a88570ced7eafce95c68f6f1f7124cd23/gdx/src/com/badlogic/gdx/utils/BufferUtils.java#L287
             @SuppressWarnings("all")
@@ -61,8 +60,7 @@ public class UnsafeDataAccess extends AbstractDataAccess
     }
 
     private long address;
-    private long capacity;
-    private transient boolean closed = false;
+    private long capacity;    
 
     UnsafeDataAccess( String name, String location, ByteOrder order )
     {
@@ -75,12 +73,12 @@ public class UnsafeDataAccess extends AbstractDataAccess
         // TODO use unsafe.pageSize() instead segmentSizeInBytes?
         // e.g. on my system pageSize is only 4096
         setSegmentSize(segmentSizeInBytes);
-        incCapacity(bytes);
+        ensureCapacity(bytes);
         return this;
     }
 
     @Override
-    public final boolean incCapacity( long bytes )
+    public final boolean ensureCapacity(long bytes)
     {
         return ensureCapacity(bytes, true);
     }
@@ -127,8 +125,8 @@ public class UnsafeDataAccess extends AbstractDataAccess
     @Override
     public boolean loadExisting()
     {
-        if (closed)
-            return false;
+        if (isClosed())
+            throw new IllegalStateException("already closed");
 
         File file = new File(getFullName());
         if (!file.exists() || file.length() == 0)
@@ -173,7 +171,7 @@ public class UnsafeDataAccess extends AbstractDataAccess
     @Override
     public void flush()
     {
-        if (closed)
+        if (isClosed())
             throw new IllegalStateException("already closed");
 
         try
@@ -204,7 +202,7 @@ public class UnsafeDataAccess extends AbstractDataAccess
     @Override
     public void close()
     {
-        closed = true;
+        super.close();
         UNSAFE.freeMemory(address);
     }
 
@@ -218,6 +216,18 @@ public class UnsafeDataAccess extends AbstractDataAccess
     public final int getInt( long bytePos )
     {
         return UNSAFE.getInt(address + bytePos);
+    }
+
+    @Override
+    public short getShort( long bytePos )
+    {
+        return UNSAFE.getShort(address + bytePos);
+    }
+
+    @Override
+    public void setShort( long bytePos, short value )
+    {
+        UNSAFE.putShort(address + bytePos, value);
     }
 
     @Override

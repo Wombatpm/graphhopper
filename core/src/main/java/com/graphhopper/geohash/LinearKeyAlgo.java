@@ -18,7 +18,7 @@
 package com.graphhopper.geohash;
 
 import com.graphhopper.util.shapes.BBox;
-import com.graphhopper.util.shapes.CoordTrig;
+import com.graphhopper.util.shapes.GHPoint;
 
 /**
  * This class maps lat,lon to a (tile)number unlike SpatialKeyAlgo.
@@ -61,7 +61,7 @@ public class LinearKeyAlgo implements KeyAlgo
 
     public LinearKeyAlgo setBounds( BBox bounds )
     {
-        setBounds(bounds.minLon, bounds.maxLat, bounds.minLat, bounds.maxLat);
+        setBounds(bounds.minLon, bounds.maxLon, bounds.minLat, bounds.maxLat);
         return this;
     }
 
@@ -71,7 +71,7 @@ public class LinearKeyAlgo implements KeyAlgo
     }
 
     @Override
-    public long encode( CoordTrig coord )
+    public long encode( GHPoint coord )
     {
         return encode(coord.lat, coord.lon);
     }
@@ -87,8 +87,8 @@ public class LinearKeyAlgo implements KeyAlgo
         lat = Math.min(Math.max(lat, bounds.minLat), bounds.maxLat);
         lon = Math.min(Math.max(lon, bounds.minLon), bounds.maxLon);
         // introduce a minor correction to round to lower grid entry!
-        int latIndex = (int) ((lat - bounds.minLat) / latDelta * C);
-        int lonIndex = (int) ((lon - bounds.minLon) / lonDelta * C);
+        long latIndex = (long) ((lat - bounds.minLat) / latDelta * C);
+        long lonIndex = (long) ((lon - bounds.minLon) / lonDelta * C);
         return latIndex * lonUnits + lonIndex;
     }
 
@@ -98,11 +98,22 @@ public class LinearKeyAlgo implements KeyAlgo
      * @param linearKey is the input
      */
     @Override
-    public final void decode( long linearKey, CoordTrig latLon )
+    public final void decode( long linearKey, GHPoint latLon )
     {
         double lat = linearKey / lonUnits * latDelta + bounds.minLat;
         double lon = linearKey % lonUnits * lonDelta + bounds.minLon;
         latLon.lat = lat + latDelta / 2;
         latLon.lon = lon + lonDelta / 2;
     }
+
+    public double getLatDelta()
+    {
+        return latDelta;
+    }
+
+    public double getLonDelta()
+    {
+        return lonDelta;
+    }
+
 }

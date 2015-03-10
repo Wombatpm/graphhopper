@@ -20,9 +20,11 @@ package com.graphhopper.storage.index;
 import com.graphhopper.routing.util.AllEdgesIterator;
 import com.graphhopper.routing.util.EdgeFilter;
 import com.graphhopper.storage.Graph;
+import com.graphhopper.storage.NodeAccess;
 import com.graphhopper.util.DistancePlaneProjection;
 import com.graphhopper.util.DistanceCalc;
 import com.graphhopper.util.DistanceCalcEarth;
+import com.graphhopper.util.Helper;
 
 /**
  * Same as full index but calculates distance to all edges too
@@ -31,12 +33,15 @@ import com.graphhopper.util.DistanceCalcEarth;
  */
 public class Location2IDFullWithEdgesIndex implements LocationIndex
 {
-    private DistanceCalc calc = new DistanceCalcEarth();
-    private Graph graph;
+    private DistanceCalc calc = Helper.DIST_EARTH;
+    private final Graph graph;
+    private final NodeAccess nodeAccess;
+    private boolean closed = false;
 
     public Location2IDFullWithEdgesIndex( Graph g )
     {
         this.graph = g;
+        this.nodeAccess = g.getNodeAccess();
     }
 
     @Override
@@ -56,10 +61,10 @@ public class Location2IDFullWithEdgesIndex implements LocationIndex
     {
         if (approxDist)
         {
-            calc = new DistancePlaneProjection();
+            calc = Helper.DIST_PLANE;
         } else
         {
-            calc = new DistanceCalcEarth();
+            calc = Helper.DIST_EARTH;
         }
         return this;
     }
@@ -79,6 +84,9 @@ public class Location2IDFullWithEdgesIndex implements LocationIndex
     @Override
     public QueryResult findClosest( double queryLat, double queryLon, EdgeFilter filter )
     {
+        if (isClosed())
+            throw new IllegalStateException("You need to create a new LocationIndex instance as it is already closed");
+
         QueryResult res = new QueryResult(queryLat, queryLon);
         double foundDist = Double.MAX_VALUE;
         AllEdgesIterator iter = graph.getAllEdges();
@@ -98,8 +106,8 @@ public class Location2IDFullWithEdgesIndex implements LocationIndex
                     node = iter.getAdjNode();
                 }
 
-                double fromLat = graph.getLatitude(node);
-                double fromLon = graph.getLongitude(node);
+                double fromLat = nodeAccess.getLatitude(node);
+                double fromLon = nodeAccess.getLongitude(node);
                 double fromDist = calc.calcDist(fromLat, fromLon, queryLat, queryLon);
                 if (fromDist < 0)
                     continue;
@@ -107,7 +115,7 @@ public class Location2IDFullWithEdgesIndex implements LocationIndex
                 if (fromDist < foundDist)
                 {
                     res.setQueryDistance(fromDist);
-                    res.setClosestEdge(iter.detach());
+                    res.setClosestEdge(iter.detach(false));
                     res.setClosestNode(node);
                     foundDist = fromDist;
                 }
@@ -117,8 +125,8 @@ public class Location2IDFullWithEdgesIndex implements LocationIndex
                     continue;
 
                 int toNode = iter.getAdjNode();
-                double toLat = graph.getLatitude(toNode);
-                double toLon = graph.getLongitude(toNode);
+                double toLat = nodeAccess.getLatitude(toNode);
+                double toLon = nodeAccess.getLongitude(toNode);
 
                 if (calc.validEdgeDistance(queryLat, queryLon,
                         fromLat, fromLon, toLat, toLon))
@@ -155,6 +163,13 @@ public class Location2IDFullWithEdgesIndex implements LocationIndex
     @Override
     public void close()
     {
+        closed = true;
+    }
+
+    @Override
+    public boolean isClosed()
+    {
+        return closed;
     }
 
     @Override

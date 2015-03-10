@@ -23,7 +23,6 @@ import gnu.trove.list.array.TLongArrayList;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
-import java.util.Map;
 
 /**
  * Represents an OSM Way
@@ -32,42 +31,23 @@ import java.util.Map;
  */
 public class OSMWay extends OSMElement
 {
-    protected TLongList nodes;
+    protected final TLongList nodes = new TLongArrayList(5);
 
     /**
      * Constructor for XML Parser
-     * <p/>
-     * @param id
-     * @param parser
-     * @throws XMLStreamException
      */
-    public OSMWay( long id, XMLStreamReader parser ) throws XMLStreamException
+    public static OSMWay create( long id, XMLStreamReader parser ) throws XMLStreamException
     {
-        super(id, WAY, parser);
-        nodes = new TLongArrayList();
-
+        OSMWay way = new OSMWay(id);
         parser.nextTag();
-        readNodes(parser);
-        readTags(parser);
-    }
-
-    /**
-     * Constructor for PBF Parser
-     * <p/>
-     * @param id
-     * @param tags
-     */
-    public OSMWay( long id, Map<String, String> tags )
-    {
-        super(id, WAY, tags);
-
-        nodes = new TLongArrayList();
+        way.readNodes(parser);
+        way.readTags(parser);
+        return way;
     }
 
     public OSMWay( long id )
     {
         super(id, WAY);
-        nodes = new TLongArrayList();
     }
 
     protected void readNodes( XMLStreamReader parser ) throws XMLStreamException
@@ -94,6 +74,6 @@ public class OSMWay extends OSMElement
     @Override
     public String toString()
     {
-        return "Way (" + id + ", " + nodes.size() + " nodes)";
+        return "Way id:" + getId() + ", nodes:" + nodes.size() + ", tags:" + super.toString();
     }
 }

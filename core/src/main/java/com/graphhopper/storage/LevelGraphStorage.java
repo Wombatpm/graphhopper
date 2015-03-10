@@ -17,14 +17,11 @@
  */
 package com.graphhopper.storage;
 
+import com.graphhopper.routing.ch.PrepareEncoder;
 import com.graphhopper.routing.util.AllEdgesSkipIterator;
 import com.graphhopper.routing.util.EdgeFilter;
 import com.graphhopper.routing.util.EncodingManager;
-import com.graphhopper.util.EdgeIteratorState;
-import com.graphhopper.util.EdgeIterator;
-import com.graphhopper.util.EdgeSkipExplorer;
-import com.graphhopper.util.EdgeSkipIterator;
-import com.graphhopper.util.EdgeSkipIterState;
+import com.graphhopper.util.*;
 
 /**
  * A Graph necessary for shortcut algorithms like Contraction Hierarchies. This class enables the
@@ -35,41 +32,76 @@ import com.graphhopper.util.EdgeSkipIterState;
  */
 public class LevelGraphStorage extends GraphHopperStorage implements LevelGraph
 {
-    private final int I_SKIP_EDGE1;
-    private final int I_SKIP_EDGE2;
-    private final int I_LEVEL;
+    private static final double WEIGHT_FACTOR = 1000f;
+    // 2 bits for access, for now only 32bit => not Long.MAX
+    private static final long MAX_WEIGHT_LONG = (Integer.MAX_VALUE >> 2) << 2;
+    private static final double MAX_WEIGHT = (Integer.MAX_VALUE >> 2) / WEIGHT_FACTOR;
+    private int I_SKIP_EDGE1;
+    private int I_SKIP_EDGE2;
+    private int I_LEVEL;
+    // after the last edge only shortcuts are stored
+    private int lastEdgeIndex = -1;
+    private final long scDirMask = PrepareEncoder.getScDirMask();
+    private final Graph baseGraph;
 
-    public LevelGraphStorage( Directory dir, EncodingManager encodingManager )
+    public LevelGraphStorage( Directory dir, EncodingManager encodingManager, boolean enabled3D )
     {
-        super(dir, encodingManager);
-        I_SKIP_EDGE1 = nextEdgeEntryIndex();
-        I_SKIP_EDGE2 = nextEdgeEntryIndex();
-        I_LEVEL = nextNodeEntryIndex();
+        super(dir, encodingManager, enabled3D);
+        baseGraph = new BaseGraph(this);
+    }
+
+    @Override
+    public boolean isShortcut( int edgeId )
+    {
+        return edgeId > lastEdgeIndex;
+    }
+
+    @Override
+    protected void initStorage()
+    {
+        super.initStorage();
+        I_SKIP_EDGE1 = nextEdgeEntryIndex(4);
+        I_SKIP_EDGE2 = nextEdgeEntryIndex(4);
+        I_LEVEL = nextNodeEntryIndex(4);
         initNodeAndEdgeEntrySize();
     }
 
     @Override
-    public final void setLevel( int index, int level )
+    public final void setLevel( int nodeIndex, int level )
     {
-        ensureNodeIndex(index);
-        nodes.setInt((long) index * nodeEntryBytes + I_LEVEL, level);
+        if (nodeIndex >= getNodes())
+            return;
+
+        nodes.setInt((long) nodeIndex * nodeEntryBytes + I_LEVEL, level);
     }
 
     @Override
-    public final int getLevel( int index )
+    public final int getLevel( int nodeIndex )
     {
-        ensureNodeIndex(index);
-        return nodes.getInt((long) index * nodeEntryBytes + I_LEVEL);
+        // automatically allocate new nodes only via creating edges or setting node properties
+        if (nodeIndex >= getNodes())
+            throw new IllegalStateException("node " + nodeIndex + " is invalid. Not in [0," + getNodes() + ")");
+
+        return nodes.getInt((long) nodeIndex * nodeEntryBytes + I_LEVEL);
     }
 
     @Override
     public EdgeSkipIterState shortcut( int a, int b )
     {
-        return edge(a, b);
+        return createEdge(a, b);
     }
 
     @Override
     public EdgeSkipIterState edge( int a, int b )
+    {
+        if (lastEdgeIndex + 1 < edgeCount)
+            throw new IllegalStateException("Cannot create after shortcut was created");
+
+        lastEdgeIndex = edgeCount;
+        return createEdge(a, b);
+    }
+
+    private EdgeSkipIterState createEdge( int a, int b )
     {
         ensureNodeIndex(Math.max(a, b));
         int edgeId = internalEdgeAdd(a, b);
@@ -84,7 +116,7 @@ public class LevelGraphStorage extends GraphHopperStorage implements LevelGraph
     @Override
     public EdgeSkipExplorer createEdgeExplorer()
     {
-        return createEdgeExplorer(allEdgesFilter);
+        return createEdgeExplorer(EdgeFilter.ALL_EDGES);
     }
 
     @Override
@@ -114,7 +146,7 @@ public class LevelGraphStorage extends GraphHopperStorage implements LevelGraph
         }
 
         @Override
-        public EdgeSkipIterator setBaseNode( int baseNode )
+        public final EdgeSkipIterator setBaseNode( int baseNode )
         {
             super.setBaseNode(baseNode);
             return this;
@@ -147,11 +179,24 @@ public class LevelGraphStorage extends GraphHopperStorage implements LevelGraph
         @Override
         public final boolean isShortcut()
         {
-            return EdgeIterator.Edge.isValid(getSkippedEdge1());
+            return edgeId > lastEdgeIndex;
         }
 
         @Override
-        public EdgeIterator detach()
+        public final EdgeSkipIterState setWeight( double weight )
+        {
+            LevelGraphStorage.this.setWeight(this, weight);
+            return this;
+        }
+
+        @Override
+        public final double getWeight()
+        {
+            return LevelGraphStorage.this.getWeight(this);
+        }
+
+        @Override
+        public final EdgeIteratorState detach( boolean reverseArg )
         {
             if (edgeId == nextEdge)
                 throw new IllegalStateException("call next before detaching");
@@ -159,16 +204,72 @@ public class LevelGraphStorage extends GraphHopperStorage implements LevelGraph
             iter.setBaseNode(baseNode);
             iter.setEdgeId(edgeId);
             iter.next();
+            if (reverseArg)
+            {
+                iter.reverse = !this.reverse;
+                iter.adjNode = baseNode;
+                iter.baseNode = adjNode;
+            }
             return iter;
         }
 
         @Override
-        public void copyProperties( EdgeIteratorState edge )
+        public final EdgeIteratorState copyPropertiesTo( EdgeIteratorState edge )
         {
-            super.copyProperties(edge);
-            EdgeSkipIterator eSkip = (EdgeSkipIterator) edge;
+            super.copyPropertiesTo(edge);
+
+//            EdgeSkipIterator eSkip = (EdgeSkipIterator) edge;
 //            setSkippedEdges(eSkip.getSkippedEdge1(), eSkip.getSkippedEdge2());
+            return edge;
         }
+
+        @Override
+        public String getName()
+        {
+            if (isShortcut())
+                throw new IllegalStateException("Cannot call getName on shortcut " + getEdge());
+            return super.getName();
+        }
+
+        @Override
+        public EdgeIteratorState setName( String name )
+        {
+            if (isShortcut())
+                throw new IllegalStateException("Cannot call setName on shortcut " + getEdge());
+            return super.setName(name);
+        }
+
+        @Override
+        public PointList fetchWayGeometry( int mode )
+        {
+            if (isShortcut())
+                throw new IllegalStateException("Cannot call fetchWayGeometry on shortcut " + getEdge());
+            return super.fetchWayGeometry(mode);
+        }
+
+        @Override
+        public EdgeIteratorState setWayGeometry( PointList list )
+        {
+            if (isShortcut())
+                throw new IllegalStateException("Cannot call setWayGeometry on shortcut " + getEdge());
+            return super.setWayGeometry(list);
+        }
+    }
+
+    @Override
+    long reverseFlags( long edgePointer, long flags )
+    {
+        boolean isShortcut = edgePointer > (long) lastEdgeIndex * edgeEntryBytes;
+        if (!isShortcut)
+            return super.reverseFlags(edgePointer, flags);
+
+        // we need a special swapping for level graph if it is a shortcut as we only store the weight and access flags then
+        long dir = flags & scDirMask;
+        if (dir == scDirMask || dir == 0)
+            return flags;
+
+        // swap the last bits with this mask
+        return flags ^ scDirMask;
     }
 
     /**
@@ -179,25 +280,20 @@ public class LevelGraphStorage extends GraphHopperStorage implements LevelGraph
      */
     public void disconnect( EdgeSkipExplorer explorer, EdgeIteratorState edgeState )
     {
-        // search edge with opposite direction        
+        // search edge with opposite direction but we need to know the previousEdge for the internalEdgeDisconnect so we cannot simply do:
         // EdgeIteratorState tmpIter = getEdgeProps(iter.getEdge(), iter.getBaseNode());
         EdgeSkipIterator tmpIter = explorer.setBaseNode(edgeState.getAdjNode());
         int tmpPrevEdge = EdgeIterator.NO_EDGE;
-        boolean found = false;
         while (tmpIter.next())
         {
-            // If we disconnect shortcuts only we could run normal algos on the graph too
-            // BUT CH queries will be 10-20% slower and preparation will be 10% slower
-            if (/*tmpIter.isShortcut() &&*/tmpIter.getEdge() == edgeState.getEdge())
+            if (tmpIter.isShortcut() && tmpIter.getEdge() == edgeState.getEdge())
             {
-                found = true;
+                internalEdgeDisconnect(edgeState.getEdge(), (long) tmpPrevEdge * edgeEntryBytes, edgeState.getAdjNode(), edgeState.getBaseNode());
                 break;
             }
 
             tmpPrevEdge = tmpIter.getEdge();
         }
-        if (found)
-            internalEdgeDisconnect(edgeState.getEdge(), (long) tmpPrevEdge * edgeEntryBytes, edgeState.getAdjNode(), edgeState.getBaseNode());
     }
 
     @Override
@@ -209,28 +305,41 @@ public class LevelGraphStorage extends GraphHopperStorage implements LevelGraph
     class AllEdgeSkipIterator extends AllEdgeIterator implements AllEdgesSkipIterator
     {
         @Override
-        public void setSkippedEdges( int edge1, int edge2 )
+        public final void setSkippedEdges( int edge1, int edge2 )
         {
             edges.setInt(edgePointer + I_SKIP_EDGE1, edge1);
             edges.setInt(edgePointer + I_SKIP_EDGE2, edge2);
         }
 
         @Override
-        public int getSkippedEdge1()
+        public final int getSkippedEdge1()
         {
             return edges.getInt(edgePointer + I_SKIP_EDGE1);
         }
 
         @Override
-        public int getSkippedEdge2()
+        public final int getSkippedEdge2()
         {
             return edges.getInt(edgePointer + I_SKIP_EDGE2);
         }
 
         @Override
-        public boolean isShortcut()
+        public final boolean isShortcut()
         {
-            return EdgeIterator.Edge.isValid(getSkippedEdge1());
+            return edgePointer / edgeEntryBytes > lastEdgeIndex;
+        }
+
+        @Override
+        public final EdgeSkipIterState setWeight( double weight )
+        {
+            LevelGraphStorage.this.setWeight(this, weight);
+            return this;
+        }
+
+        @Override
+        public final double getWeight()
+        {
+            return LevelGraphStorage.this.getWeight(this);
         }
     }
 
@@ -248,28 +357,92 @@ public class LevelGraphStorage extends GraphHopperStorage implements LevelGraph
         }
 
         @Override
-        public void setSkippedEdges( int edge1, int edge2 )
+        public final void setSkippedEdges( int edge1, int edge2 )
         {
             edges.setInt(edgePointer + I_SKIP_EDGE1, edge1);
             edges.setInt(edgePointer + I_SKIP_EDGE2, edge2);
         }
 
         @Override
-        public int getSkippedEdge1()
+        public final int getSkippedEdge1()
         {
             return edges.getInt(edgePointer + I_SKIP_EDGE1);
         }
 
         @Override
-        public int getSkippedEdge2()
+        public final int getSkippedEdge2()
         {
             return edges.getInt(edgePointer + I_SKIP_EDGE2);
         }
 
         @Override
-        public boolean isShortcut()
+        public final boolean isShortcut()
         {
-            return EdgeIterator.Edge.isValid(getSkippedEdge1());
+            return edgeId > lastEdgeIndex;
         }
+
+        @Override
+        public final EdgeSkipIterState setWeight( double weight )
+        {
+            LevelGraphStorage.this.setWeight(this, weight);
+            return this;
+        }
+
+        @Override
+        public final double getWeight()
+        {
+            return LevelGraphStorage.this.getWeight(this);
+        }
+    }
+
+    final void setWeight( EdgeSkipIterState edge, double weight )
+    {
+        if (!edge.isShortcut())
+            throw new IllegalStateException("setWeight is only available for shortcuts");
+        if (weight < 0)
+            throw new IllegalArgumentException("weight cannot be negative! but was " + weight);
+
+        long weightLong;
+        if (weight > MAX_WEIGHT)
+            weightLong = MAX_WEIGHT_LONG;
+        else
+            weightLong = ((long) (weight * WEIGHT_FACTOR)) << 2;
+
+        long accessFlags = edge.getFlags() & PrepareEncoder.getScDirMask();
+        edge.setFlags(weightLong | accessFlags);
+    }
+
+    final double getWeight( EdgeSkipIterState edge )
+    {
+        if (!edge.isShortcut())
+            throw new IllegalStateException("getWeight is only available for shortcuts");
+
+        double weight = (edge.getFlags() >> 2) / WEIGHT_FACTOR;
+        if (weight >= MAX_WEIGHT)
+            return Double.POSITIVE_INFINITY;
+
+        return weight;
+    }
+
+    @Override
+    protected int loadEdgesHeader()
+    {
+        int next = super.loadEdgesHeader();
+        lastEdgeIndex = edges.getHeader(next * 4);
+        return next + 1;
+    }
+
+    @Override
+    protected int setEdgesHeader()
+    {
+        int next = super.setEdgesHeader();
+        edges.setHeader(next * 4, lastEdgeIndex);
+        return next + 1;
+    }
+
+    @Override
+    public Graph getBaseGraph()
+    {
+        return baseGraph;
     }
 }

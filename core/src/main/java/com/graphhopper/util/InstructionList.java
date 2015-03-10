@@ -19,27 +19,31 @@ package com.graphhopper.util;
 
 import java.text.SimpleDateFormat;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Iterator;
-import java.util.List;
-import java.util.TimeZone;
+import java.util.*;
 
 /**
  * List of instructions.
  */
 public class InstructionList implements Iterable<Instruction>
 {
+    public static final InstructionList EMPTY = new InstructionList();
     private final List<Instruction> instructions;
+    private final Translation tr;
 
-    public InstructionList()
+    private InstructionList()
     {
-        this(10);
+        this(0, null);
     }
 
-    public InstructionList( int cap )
+    public InstructionList( Translation tr )
+    {
+        this(10, tr);
+    }
+
+    public InstructionList( int cap, Translation tr )
     {
         instructions = new ArrayList<Instruction>(cap);
+        this.tr = tr;
     }
 
     public void add( Instruction instr )
@@ -57,150 +61,43 @@ public class InstructionList implements Iterable<Instruction>
         return instructions.size();
     }
 
-    /**
-     * @return list of indications useful to create images
-     */
-    public List<Integer> createIndications()
+    public List<Map<String, Object>> createJson()
     {
-        List<Integer> res = new ArrayList<Integer>(instructions.size());
+        List<Map<String, Object>> instrList = new ArrayList<Map<String, Object>>(instructions.size());
+        int pointsIndex = 0;
+        int counter = 0;
         for (Instruction instruction : instructions)
         {
-            res.add(instruction.getIndication());
-        }
-        return res;
-    }
+            Map<String, Object> instrJson = new HashMap<String, Object>();
+            instrList.add(instrJson);
 
-    public List<Double> createDistances()
-    {
-        List<Double> res = new ArrayList<Double>(instructions.size());
-        for (Instruction instruction : instructions)
-        {
-            res.add(instruction.getDistance());
-        }
-        return res;
-    }
-
-    public List<String> createDistances( TranslationMap.Translation tr, boolean mile )
-    {
-        List<Double> distances = createDistances();
-        List<String> labels = new ArrayList<String>(distances.size());
-        for (int i = 0; i < distances.size(); i++)
-        {
-            double distInMeter = distances.get(i);
-            if (mile)
+            InstructionAnnotation ia = instruction.getAnnotation();
+            String str = instruction.getTurnDescription(tr);
+            if (Helper.isEmpty(str))
+                str = ia.getMessage();
+            instrJson.put("text", Helper.firstBig(str));
+            if (!ia.isEmpty())
             {
-                // calculate miles
-                double distInMiles = distInMeter / 1000 / DistanceCalcEarth.KM_MILE;
-                if (distInMiles < 0.9)
-                {
-                    labels.add((int) DistanceCalcEarth.round(distInMiles * 5280, 1) + " " + tr.tr("ftAbbr"));
-                } else
-                {
-                    if (distInMiles < 100)
-                        labels.add(DistanceCalcEarth.round(distInMiles, 2) + " " + tr.tr("miAbbr"));
-                    else
-                        labels.add((int) DistanceCalcEarth.round(distInMiles, 1) + " " + tr.tr("miAbbr"));
-                }
-            } else
-            {
-                if (distInMeter < 950)
-                {
-                    labels.add((int) DistanceCalcEarth.round(distInMeter, 1) + " " + tr.tr("mAbbr"));
-                } else
-                {
-                    distInMeter /= 1000;
-                    if (distInMeter < 100)
-                        labels.add(DistanceCalcEarth.round(distInMeter, 2) + " " + tr.tr("kmAbbr"));
-                    else
-                        labels.add((int) DistanceCalcEarth.round(distInMeter, 1) + " " + tr.tr("kmAbbr"));
-                }
+                instrJson.put("annotationText", ia.getMessage());
+                instrJson.put("annotationImportance", ia.getImportance());
             }
-        }
-        return labels;
-    }
 
-    /**
-     * @return string representations of the times until no new instruction.
-     */
-    public List<Long> createMillis()
-    {
-        List<Long> res = new ArrayList<Long>(instructions.size());
-        for (Instruction instruction : instructions)
-        {
-            res.add(instruction.getMillis());
-        }
-        return res;
-    }
+            instrJson.put("time", instruction.getTime());
+            instrJson.put("distance", Helper.round(instruction.getDistance(), 3));
+            instrJson.put("sign", instruction.getSign());
+            instrJson.putAll(instruction.getExtraInfoJSON());
 
-    /**
-     * @return the lat,lon positions at which the instructions have to be presented.
-     */
-    public List<List<Double>> createLatLngs()
-    {
-        List<List<Double>> res = new ArrayList<List<Double>>();
-        for (Instruction instruction : instructions)
-        {
-            List<Double> latLng = new ArrayList<Double>(2);
-            latLng.add(instruction.getFirstLat());
-            latLng.add(instruction.getFirstLon());
-            res.add(latLng);
-        }
-        return res;
-    }
+            int tmpIndex = pointsIndex + instruction.getPoints().size();
+            // the last instruction should not point to the next instruction
+            if (counter + 1 == instructions.size())
+                tmpIndex--;
 
-    public List<String> createDescription( TranslationMap.Translation tr )
-    {
-        String shLeftTr = tr.tr("sharp_left");
-        String shRightTr = tr.tr("sharp_right");
-        String slLeftTr = tr.tr("slight_left");
-        String slRightTr = tr.tr("slight_right");
-        String leftTr = tr.tr("left");
-        String rightTr = tr.tr("right");
-        String continueTr = tr.tr("continue");
-        List<String> res = new ArrayList<String>(instructions.size());
-        for (Instruction instruction : instructions)
-        {
-            String str;
-            String n = getWayName(instruction.getName(), instruction.getPavement(), instruction.getWayType(), tr);
-            int indi = instruction.getIndication();
-            if (indi == Instruction.FINISH)
-            {
-                str = tr.tr("finish");
-            } else if (indi == Instruction.CONTINUE_ON_STREET)
-            {
-                str = Helper.isEmpty(n) ? continueTr : tr.tr("continue_onto", n);
-            } else
-            {
-                String dir = null;
-                switch (indi)
-                {
-                    case Instruction.TURN_SHARP_LEFT:
-                        dir = shLeftTr;
-                        break;
-                    case Instruction.TURN_LEFT:
-                        dir = leftTr;
-                        break;
-                    case Instruction.TURN_SLIGHT_LEFT:
-                        dir = slLeftTr;
-                        break;
-                    case Instruction.TURN_SLIGHT_RIGHT:
-                        dir = slRightTr;
-                        break;
-                    case Instruction.TURN_RIGHT:
-                        dir = rightTr;
-                        break;
-                    case Instruction.TURN_SHARP_RIGHT:
-                        dir = shRightTr;
-                        break;
-                }
-                if (dir == null)
-                    throw new IllegalStateException("Indication not found " + indi);
+            instrJson.put("interval", Arrays.asList(pointsIndex, tmpIndex));
+            pointsIndex = tmpIndex;
 
-                str = Helper.isEmpty(n) ? tr.tr("turn", dir) : tr.tr("turn_onto", dir, n);
-            }
-            res.add(Helper.firstBig(str));
+            counter++;
         }
-        return res;
+        return instrList;
     }
 
     public boolean isEmpty()
@@ -226,8 +123,9 @@ public class InstructionList implements Iterable<Instruction>
     }
 
     /**
-     * This method returns a list of gpx entries where the time (in millis) is relative to the first
-     * which is 0.
+     * @return This method returns a list of gpx entries where the time (in millis) is relative to
+     * the first which is 0.
+     * <p>
      */
     public List<GPXEntry> createGPXList()
     {
@@ -236,24 +134,42 @@ public class InstructionList implements Iterable<Instruction>
 
         List<GPXEntry> gpxList = new ArrayList<GPXEntry>();
         long timeOffset = 0;
-        double prevLat = Double.NaN, prevLon = Double.NaN;
-        double prevFactor = 0;
-        for (Instruction i : this)
+        for (int i = 0; i < size() - 1; i++)
         {
-            timeOffset = i.fillGPXList(gpxList, timeOffset, prevFactor, prevLat, prevLon);
-            prevFactor = i.getDistance() / i.getMillis();
-            prevLat = i.getLastLat();
-            prevLon = i.getLastLon();
+            Instruction prevInstr = (i > 0) ? get(i - 1) : null;
+            boolean instrIsFirst = prevInstr == null;
+            Instruction nextInstr = get(i + 1);
+            nextInstr.checkOne();
+            // current instruction does not contain last point which is equals to first point of next instruction:
+            timeOffset = get(i).fillGPXList(gpxList, timeOffset, prevInstr, nextInstr, instrIsFirst);
         }
+        Instruction lastI = get(size() - 1);
+        if (lastI.points.size() != 1)
+            throw new IllegalStateException("Last instruction must have exactly one point but was " + lastI.points.size());
+        double lastLat = lastI.getFirstLat(), lastLon = lastI.getFirstLon(),
+                lastEle = lastI.getPoints().is3D() ? lastI.getFirstEle() : Double.NaN;
+        gpxList.add(new GPXEntry(lastLat, lastLon, lastEle, timeOffset));
         return gpxList;
     }
 
     /**
-     * Creates the GPX Format out of the points.
+     * Creates the standard GPX string out of the points according to the schema found here:
+     * https://graphhopper.com/public/schema/gpx-1.1.xsd
      * <p/>
      * @return string to be stored as gpx file
      */
+    public String createGPX()
+    {
+        return createGPX("GraphHopper", 0, "GMT");
+    }
+
     public String createGPX( String trackName, long startTimeMillis, String timeZoneId )
+    {
+        boolean includeElevation = getSize() > 0 ? get(0).getPoints().is3D() : false;
+        return createGPX(trackName, startTimeMillis, timeZoneId, includeElevation);
+    }
+
+    public String createGPX( String trackName, long startTimeMillis, String timeZoneId, boolean includeElevation )
     {
         SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ");
         TimeZone tz = TimeZone.getDefault();
@@ -262,24 +178,51 @@ public class InstructionList implements Iterable<Instruction>
 
         formatter.setTimeZone(tz);
         String header = "<?xml version='1.0' encoding='UTF-8' standalone='no' ?>"
-                + "<gpx xmlns='http://www.topografix.com/GPX/1/1' creator='Graphhopper' version='1.1' >"
-                + "<metadata>"
+                + "<gpx xmlns='http://www.topografix.com/GPX/1/1' xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance'"
+                + " creator='Graphhopper' version='1.1'"
+                // This xmlns:gh acts only as ID, no valid URL necessary.
+                // Use a separate namespace for custom extensions to make basecamp happy.
+                + " xmlns:gh='https://graphhopper.com/public/schema/gpx/1.1'>"
+                + "\n<metadata>"
+                + "<copyright author=\"OpenStreetMap contributors\"/>"
                 + "<link href='http://graphhopper.com'>"
                 + "<text>GraphHopper GPX</text>"
                 + "</link>"
                 + "<time>" + tzHack(formatter.format(startTimeMillis)) + "</time>"
                 + "</metadata>";
         StringBuilder track = new StringBuilder(header);
-        track.append("<trk><name>").append(trackName).append("</name>");
+        if (!isEmpty())
+        {
+            track.append("\n<rte>");
+            Instruction nextInstr = null;
+            for (Instruction currInstr : instructions)
+            {
+                if (null != nextInstr)
+                    createRteptBlock(track, nextInstr, currInstr);
+
+                nextInstr = currInstr;
+            }
+            createRteptBlock(track, nextInstr, null);
+            track.append("</rte>");
+        }
+
+        track.append("\n<trk><name>").append(trackName).append("</name>");
+
         track.append("<trkseg>");
         for (GPXEntry entry : createGPXList())
         {
-            track.append("<trkpt lat='").append(entry.getLat()).append("' lon='").append(entry.getLon()).append("'>");
+            track.append("\n<trkpt lat='").append(Helper.round6(entry.getLat()));
+            track.append("' lon='").append(Helper.round6(entry.getLon())).append("'>");
+            if (includeElevation)
+                track.append("<ele>").append(Helper.round2(entry.getEle())).append("</ele>");
             track.append("<time>").append(tzHack(formatter.format(startTimeMillis + entry.getMillis()))).append("</time>");
             track.append("</trkpt>");
         }
         track.append("</trkseg>");
-        track.append("</trk></gpx>");
+        track.append("</trk>");
+
+        // we could now use 'wpt' for via points
+        track.append("</gpx>");
         return track.toString().replaceAll("\\'", "\"");
     }
 
@@ -291,41 +234,112 @@ public class InstructionList implements Iterable<Instruction>
         return str.substring(0, str.length() - 2) + ":" + str.substring(str.length() - 2);
     }
 
-    public static String getWayName( String name, int pavetype, int waytype, TranslationMap.Translation tr )
+    private void createRteptBlock( StringBuilder output, Instruction instruction, Instruction nextI )
     {
-        String pavementName = "";
-        if (pavetype == 1)
-            pavementName = tr.tr("unpaved");
+        output.append("\n<rtept lat=\"").append(Helper.round6(instruction.getFirstLat())).
+                append("\" lon=\"").append(Helper.round6(instruction.getFirstLon())).append("\">");
 
-        String wayClass = "";
-        switch (waytype)
+        if (!instruction.getName().isEmpty())
+            output.append("<desc>").append(instruction.getTurnDescription(tr)).append("</desc>");
+
+        output.append("<extensions>");
+        output.append("<gh:distance>").append(Helper.round(instruction.getDistance(), 1)).append("</gh:distance>");
+        output.append("<gh:time>").append(instruction.getTime()).append("</gh:time>");
+
+        String direction = instruction.calcDirection(nextI);
+        if (!direction.isEmpty())
+            output.append("<gh:direction>").append(direction).append("</gh:direction>");
+
+        double azimuth = instruction.calcAzimuth(nextI);
+        if (!Double.isNaN(azimuth))
+            output.append("<gh:azimuth>").append(Helper.round2(azimuth)).append("</gh:azimuth>");
+
+        output.append("<gh:sign>").append(instruction.getSign()).append("</gh:sign>");
+        output.append("</extensions>");
+        output.append("</rtept>");
+    }
+
+    /**
+     * @return list of lat lon
+     */
+    List<List<Double>> createStartPoints()
+    {
+        List<List<Double>> res = new ArrayList<List<Double>>(instructions.size());
+        for (Instruction instruction : instructions)
         {
-            case 0:
-                wayClass = tr.tr("road");
-                break;
-            case 1:
-                wayClass = tr.tr("pushing_section");
-                break;
-            case 2:
-                wayClass = tr.tr("cycleway");
-                break;
-            case 3:
-                wayClass = tr.tr("way");
-                break;
+            res.add(Arrays.asList(instruction.getFirstLat(), instruction.getFirstLon()));
+        }
+        return res;
+    }
+
+    /**
+     * This method is useful for navigation devices to find the next instruction for the specified
+     * coordinate (e.g. the current position).
+     * <p>
+     * @param maxDistance the maximum acceptable distance to the instruction (in meter)
+     * @return the next Instruction or null if too far away.
+     */
+    public Instruction find( double lat, double lon, double maxDistance )
+    {
+        // handle special cases
+        if (getSize() == 0)
+        {
+            return null;
+        }
+        PointList points = get(0).getPoints();
+        double prevLat = points.getLatitude(0);
+        double prevLon = points.getLongitude(0);
+        DistanceCalc distCalc = Helper.DIST_EARTH;
+        double foundMinDistance = distCalc.calcNormalizedDist(lat, lon, prevLat, prevLon);
+        int foundInstruction = 0;
+
+        // Search the closest edge to the query point
+        if (getSize() > 1)
+        {
+            for (int instructionIndex = 0; instructionIndex < getSize(); instructionIndex++)
+            {
+                points = get(instructionIndex).getPoints();
+                for (int pointIndex = 0; pointIndex < points.size(); pointIndex++)
+                {
+                    double currLat = points.getLatitude(pointIndex);
+                    double currLon = points.getLongitude(pointIndex);
+
+                    if (!(instructionIndex == 0 && pointIndex == 0))
+                    {
+                        // calculate the distance from the point to the edge
+                        double distance;
+                        int index = instructionIndex;
+                        if (distCalc.validEdgeDistance(lat, lon, currLat, currLon, prevLat, prevLon))
+                        {
+                            distance = distCalc.calcNormalizedEdgeDistance(lat, lon, currLat, currLon, prevLat, prevLon);
+                            if (pointIndex > 0)
+                                index++;
+                        } else
+                        {
+                            distance = distCalc.calcNormalizedDist(lat, lon, currLat, currLon);
+                        }
+
+                        if (distance < foundMinDistance)
+                        {
+                            foundMinDistance = distance;
+                            foundInstruction = index;
+                        }
+                    }
+
+                    prevLat = currLat;
+                    prevLon = currLon;
+                }
+            }
         }
 
-        if (name.isEmpty())
-            if (pavementName.isEmpty())
-                return wayClass;
-            else
-                return wayClass + ", " + pavementName;
-        else if (pavementName.isEmpty())
-            if (waytype == 0)
-                return name;
-            else
-                return name + ", " + wayClass;
-        else
-            return name + ", " + pavementName;
+        if (distCalc.calcDenormalizedDist(foundMinDistance) > maxDistance)
+            return null;
+
+        // special case finish condition
+        if (foundInstruction == getSize())
+            foundInstruction--;
+
+        return get(foundInstruction);
     }
 
 }

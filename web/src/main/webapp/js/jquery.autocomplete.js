@@ -34,6 +34,7 @@
                     div.className = containerClass;
                     div.style.position = 'absolute';
                     div.style.display = 'none';
+					div.style.cursor = 'pointer';
                     return div;
                 }
             };
@@ -65,9 +66,6 @@
                 params: {},
                 formatResult: Autocomplete.formatResult,
                 onPreSelect: noop,
-                interceptData: function(params) {return params},
-                customDiv: '',
-                addDivToItem: function(suggestion) {return ''},
                 delimiter: null,
                 zIndex: 9999,
                 type: 'GET',
@@ -157,19 +155,19 @@
             if (options.width !== 'auto') {
                 container.width(options.width);
             }
-            
+
             // special on() plugin code for 'autocomplete'
             // http://api.jquery.com/on/#on-events-selector-data
             // Listen for mouse over event on suggestions list:
-            container.on('mouseenter.autocomplete', suggestionSelector, function () {
-                that.activate($(this).data('index'));
-            });
-
-            // Deselect active element when mouse leaves suggestions container:
-            container.on('mouseleave.autocomplete', suggestionSelector, function () {                
-                that.selectedIndex = -1;
-                container.children('.' + selected).removeClass(selected);
-            });
+//            container.on('mouseenter.autocomplete', suggestionSelector, function () {
+//                that.activate($(this).data('index'));
+//            });
+//
+//            // Deselect active element when mouse leaves suggestions container:
+//            container.on('mouseleave.autocomplete', suggestionSelector, function () {                
+//                that.selectedIndex = -1;
+//                container.children('.' + selected).removeClass(selected);
+//            });
 
             // Listen for click event on suggestions list:
             container.on('click.autocomplete', suggestionSelector, function () {
@@ -197,7 +195,7 @@
             var that = this;
             that.fixPosition();
             if (that.options.minChars <= that.el.val().length) {
-                that.onValueChange();
+                // that.onValueChange();
             }
         },
 
@@ -224,11 +222,7 @@
                 'z-index': options.zIndex
             });
         },
-        forceSuggest: function (val) {
-            var that = this;
-            that.currentValue=val;
-            that.getSuggestions(val);
-        },
+
         clearCache: function () {
             this.cachedResponse = {};
             this.badQueries = [];
@@ -483,12 +477,11 @@
                 that = this,
                 options = that.options,
                 serviceUrl = options.serviceUrl,
-                data = null,
+                data,
                 cacheKey;
 
             options.params[options.paramName] = q;
-            if(!options.ignoreParams)
-                data = options.interceptData(options.params);
+            data = options.ignoreParams ? null : options.params;
 
             if (that.isLocal) {
                 response = that.getSuggestionsLocal(q);
@@ -574,12 +567,8 @@
 
             // Build suggestions inner HTML:
             $.each(that.suggestions, function (i, suggestion) {
-                html += '<div class="' + className + '" data-index="' + i + '">' + formatResult(suggestion, value);
-                html += that.options.addDivToItem(suggestion);
-                html += '</div>';
+                html += '<div class="' + className + '" data-index="' + i + '">' + formatResult(suggestion, value) + '</div>';
             });
-            
-            html += that.options.customDiv;
 
             // If width is auto, adjust width before displaying suggestions,
             // because if instance was created before input had width, it will be zero.
@@ -686,10 +675,10 @@
             if(that.selectedIndex === index)
                 return null;
             
-            container.children('.' + selected).removeClass(selected);            
-            
+            container.children('.' + selected).removeClass(selected);
+
             that.selectedIndex = index;
-            
+
             if (that.selectedIndex !== -1 && children.length > that.selectedIndex) {
                 activeItem = children.get(that.selectedIndex);
                 $(activeItem).addClass(selected);

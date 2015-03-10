@@ -23,7 +23,7 @@ package com.graphhopper.storage;
  * Directory.create. Current implementations are RAM and memory mapped access.
  * <p/>
  * Life cycle: (1) object creation, (2) configuration (e.g. segment size), (3) create or
- * loadExisting, (4) usage, (5) close
+ * loadExisting, (4) usage and calling ensureCapacity if necessary, (5) close
  * <p/>
  * @author Peter Karich
  */
@@ -43,14 +43,24 @@ public interface DataAccess extends Storable<DataAccess>
     void rename( String newName );
 
     /**
-     * Set 4 bytes at position 'index' to the specified value
+     * Set 4 bytes at position 'bytePos' to the specified value
      */
     void setInt( long bytePos, int value );
 
     /**
-     * Get 4 bytes from position 'index'
+     * Get 4 bytes from position 'bytePos'
      */
     int getInt( long bytePos );
+
+    /**
+     * Set 2 bytes at position 'index' to the specified value
+     */
+    void setShort( long bytePos, short value );
+
+    /**
+     * Get 2 bytes from position 'index'
+     */
+    short getShort( long bytePos );
 
     /**
      * Set bytes from position 'index' to the specified values
@@ -76,7 +86,7 @@ public interface DataAccess extends Storable<DataAccess>
 
     /**
      * The first time you use a DataAccess object after configuring it you need to call this. After
-     * that first call you have to use incCapacity to ensure that enough space is reserved.
+     * that first call you have to use ensureCapacity to ensure that enough space is reserved.
      */
     @Override
     DataAccess create( long bytes );
@@ -88,7 +98,7 @@ public interface DataAccess extends Storable<DataAccess>
      * @see #create(long)
      * @return true if size was increased
      */
-    boolean incCapacity( long bytes );
+    boolean ensureCapacity(long bytes);
 
     /**
      * Reduces the allocate space to the specified bytes. Warning: it'll free the space even if it
@@ -117,5 +127,8 @@ public interface DataAccess extends Storable<DataAccess>
      */
     int getSegments();
 
+    /**
+     * @return the data access type of this object.
+     */
     DAType getType();
 }

@@ -103,9 +103,7 @@ public class DistanceCalcEarth implements DistanceCalc
     public BBox createBBox( double lat, double lon, double radiusInMeter )
     {
         if (radiusInMeter <= 0)
-        {
             throw new IllegalArgumentException("Distance must not be zero or negative! " + radiusInMeter + " lat,lon:" + lat + "," + lon);
-        }
 
         // length of a circle at specified lat / dist
         double dLon = (360 / (calcCircumference(lat) / radiusInMeter));
@@ -216,21 +214,6 @@ public class DistanceCalcEarth implements DistanceCalc
         return new GHPoint(c_lat, c_lon / shrink_factor);
     }
 
-    /**
-     * This method decides case 1: if we should use distance(r to edge) where r=(lat,lon) or case 2:
-     * min(distance(r to a), distance(r to b)) where edge=(a to b)
-     * <p/>
-     * @return true for case 1
-     */
-    // case 1:
-    //   r
-    //  . 
-    // a-------b
-    //    
-    // case 2:
-    // r
-    //  .
-    //    a-------b
     @Override
     public boolean validEdgeDistance( double r_lat_deg, double r_lon_deg,
             double a_lat_deg, double a_lon_deg,
@@ -267,11 +250,5 @@ public class DistanceCalcEarth implements DistanceCalc
     public String toString()
     {
         return "EXACT";
-    }
-
-    public static double round( double someDouble, int i )
-    {
-        double factor = Math.pow(10, i);
-        return Math.round(someDouble * factor) / factor;
     }
 }

@@ -75,7 +75,14 @@ public abstract class DataAccessTest
         da.close();
 
         // cannot load data if already closed
-        assertFalse(da.loadExisting());
+        try
+        {
+            da.loadExisting();
+            assertTrue(false);
+        } catch (Exception ex)
+        {
+            assertEquals("already closed", ex.getMessage());
+        }
 
         da = createDataAccess(name);
         assertTrue(da.loadExisting());
@@ -88,7 +95,7 @@ public abstract class DataAccessTest
     {
         DataAccess da = createDataAccess(name);
         assertFalse(da.loadExisting());
-        // throw some undefined exception if no incCapacity was called
+        // throw some undefined exception if no ensureCapacity was called
         try
         {
             da.setInt(2 * 4, 321);
@@ -142,7 +149,7 @@ public abstract class DataAccessTest
         da.setInt(31 * 4, 200);
 
         assertEquals(200, da.getInt(31 * 4));
-        da.incCapacity(2 * 128);
+        da.ensureCapacity(2 * 128);
         assertEquals(200, da.getInt(31 * 4));
         // now it shouldn't fail
         da.setInt(32 * 4, 220);
@@ -152,7 +159,7 @@ public abstract class DataAccessTest
         // ensure some bigger area
         da = createDataAccess(name);
         da.create(200 * 4);
-        da.incCapacity(600 * 4);
+        da.ensureCapacity(600 * 4);
         da.close();
     }
 
@@ -161,6 +168,7 @@ public abstract class DataAccessTest
     {
         DataAccess da1 = createDataAccess(name);
         da1.create(1001 * 4);
+        da1.setHeader(4, 12);
         da1.setInt(1 * 4, 1);
         da1.setInt(123 * 4, 321);
         da1.setInt(1000 * 4, 1111);
@@ -168,6 +176,7 @@ public abstract class DataAccessTest
         DataAccess da2 = createDataAccess(name + "2");
         da2.create(10);
         da1.copyTo(da2);
+        assertEquals(12, da2.getHeader(4));
         assertEquals(1, da2.getInt(1 * 4));
         assertEquals(321, da2.getInt(123 * 4));
         assertEquals(1111, da2.getInt(1000 * 4));
@@ -189,7 +198,7 @@ public abstract class DataAccessTest
         da.setSegmentSize(128);
         da.create(10);
         assertEquals(1, da.getSegments());
-        da.incCapacity(500);
+        da.ensureCapacity(500);
         int olds = da.getSegments();
         assertTrue(olds > 3);
 
@@ -345,5 +354,27 @@ public abstract class DataAccessTest
         int index = (int) (bytePos & indexDivisor);
         assertEquals(256, bufferIndex);
         assertEquals(11111, index);
+    }
+
+    @Test
+    public void testSet_Get_Short_Long()
+    {
+        DataAccess da = createDataAccess(name);
+        da.create(300);
+        da.setShort(6, (short) (Short.MAX_VALUE / 5));
+        assertEquals(Short.MAX_VALUE / 5, da.getShort(6));
+
+        da.setShort(8, (short) (Short.MAX_VALUE / 7));
+        assertEquals(Short.MAX_VALUE / 7, da.getShort(8));
+
+        // currently RAMIntDA does not support arbitrary byte positions
+        if (!(da instanceof RAMIntDataAccess))
+        {
+            da.setShort(7, (short) (Short.MAX_VALUE / 3));
+            assertEquals(Short.MAX_VALUE / 3, da.getShort(7));
+            // should be overwritten
+            assertNotEquals(Short.MAX_VALUE / 3, da.getShort(8));
+        }
+        da.close();
     }
 }

@@ -17,6 +17,7 @@
  */
 package com.graphhopper.util.shapes;
 
+import com.graphhopper.util.Helper;
 import com.graphhopper.util.NumHelper;
 import java.util.ArrayList;
 import java.util.List;
@@ -33,62 +34,104 @@ import java.util.List;
  */
 public class BBox implements Shape, Cloneable
 {
-    /**
-     * A bounding box which prefills the values with minimum values so that it can increase.
-     */
-    public static final BBox INVERSE = new BBox();
 
-    static
-    {
-        INVERSE.minLon = Double.MAX_VALUE;
-        INVERSE.maxLon = -Double.MAX_VALUE;
-        INVERSE.minLat = Double.MAX_VALUE;
-        INVERSE.maxLat = -Double.MAX_VALUE;
-    }
-    // longitude (theta) = x, latitude (phi) = y
+    // longitude (theta) = x, latitude (phi) = y, elevation = z
     public double minLon;
     public double maxLon;
     public double minLat;
     public double maxLat;
-
-    private BBox()
-    {
-    }
+    public double minEle;
+    public double maxEle;
+    private final boolean elevation;
 
     public BBox( double minLon, double maxLon, double minLat, double maxLat )
     {
+        this(minLon, maxLon, minLat, maxLat, Double.NaN, Double.NaN, false);
+    }
+
+    public BBox( double minLon, double maxLon, double minLat, double maxLat, double minEle, double maxEle )
+    {
+        this(minLon, maxLon, minLat, maxLat, minEle, maxEle, true);
+    }
+
+    public BBox( double minLon, double maxLon, double minLat, double maxLat, double minEle, double maxEle, boolean elevation )
+    {
+        this.elevation = elevation;
         this.maxLat = maxLat;
         this.minLon = minLon;
         this.minLat = minLat;
         this.maxLon = maxLon;
+        this.minEle = minEle;
+        this.maxEle = maxEle;
     }
 
-    public boolean check()
+    public boolean hasElevation()
     {
-        // "second longitude should be bigger than the first";
-        if (minLon >= maxLon)
-        {
-            return false;
-        }
-
-        //"second latitude should be smaller than the first";
-        if (minLat >= maxLat)
-        {
-            return false;
-        }
-        return true;
-
+        return elevation;
     }
 
-    public static BBox createEarthMax()
+    /**
+     * Prefills BBox with minimum values so that it can increase.
+     */
+    public static BBox createInverse( boolean elevation )
     {
-        return new BBox(-180.0, 180.0, -90.0, 90.0);
+        if (elevation)
+        {
+            return new BBox(Double.MAX_VALUE, -Double.MAX_VALUE, Double.MAX_VALUE, -Double.MAX_VALUE,
+                    Double.MAX_VALUE, -Double.MAX_VALUE, true);
+        } else
+        {
+            return new BBox(Double.MAX_VALUE, -Double.MAX_VALUE, Double.MAX_VALUE, -Double.MAX_VALUE,
+                    Double.NaN, Double.NaN, false);
+        }
+    }
+
+    public void update( double lat, double lon )
+    {
+        if (lat > maxLat)
+        {
+            maxLat = lat;
+        }
+
+        if (lat < minLat)
+        {
+            minLat = lat;
+        }
+
+        if (lon > maxLon)
+        {
+            maxLon = lon;
+        }
+        if (lon < minLon)
+        {
+            minLon = lon;
+        }
+    }
+
+    public void update( double lat, double lon, double elev )
+    {
+        if (elevation)
+        {
+            if (elev > maxEle)
+            {
+                maxEle = elev;
+            }
+            if (elev < minEle)
+            {
+                minEle = elev;
+            }
+        } else
+        {
+            throw new IllegalStateException("No BBox with elevation to update");
+        }
+        update(lat, lon);
+
     }
 
     @Override
     public BBox clone()
     {
-        return new BBox(minLon, maxLon, minLat, maxLat);
+        return new BBox(minLon, maxLon, minLat, maxLat, minEle, maxEle, elevation);
     }
 
     @Override
@@ -150,7 +193,11 @@ public class BBox implements Shape, Cloneable
     @Override
     public String toString()
     {
-        return minLon + "," + maxLon + "," + minLat + "," + maxLat;
+        String str = minLon + "," + maxLon + "," + minLat + "," + maxLat;
+        if (elevation)
+            str += "," + minEle + "," + maxEle;
+
+        return str;
     }
 
     public String toLessPrecisionString()
@@ -189,22 +236,49 @@ public class BBox implements Shape, Cloneable
 
     public boolean isValid()
     {
-        return Double.doubleToLongBits(maxLat) != Double.doubleToLongBits(INVERSE.maxLat)
-                && Double.doubleToLongBits(minLat) != Double.doubleToLongBits(INVERSE.minLat)
-                && Double.doubleToLongBits(maxLon) != Double.doubleToLongBits(INVERSE.maxLon)
-                && Double.doubleToLongBits(minLon) != Double.doubleToLongBits(INVERSE.minLon);
+        // second longitude should be bigger than the first
+        if (minLon >= maxLon)
+            return false;
+
+        // second latitude should be smaller than the first
+        if (minLat >= maxLat)
+            return false;
+
+        if (elevation)
+        {
+            // equal elevation is okay
+            if (minEle > maxEle)
+                return false;
+
+            if (Double.compare(maxEle, -Double.MAX_VALUE) == 0
+                    || Double.compare(minEle, Double.MAX_VALUE) == 0)
+                return false;
+        }
+
+        return Double.compare(maxLat, -Double.MAX_VALUE) != 0
+                && Double.compare(minLat, Double.MAX_VALUE) != 0
+                && Double.compare(maxLon, -Double.MAX_VALUE) != 0
+                && Double.compare(minLon, Double.MAX_VALUE) != 0;
     }
 
     /**
-     * @return array containing this bounding box. Attention: GeoJson is lon,lat!
+     * @return array containing this bounding box. Attention: GeoJson is lon,lat! If 3D is gets even
+     * worse: lon,lat,ele
      */
     public List<Double> toGeoJson()
     {
         List<Double> list = new ArrayList<Double>(4);
-        list.add(minLon);
-        list.add(minLat);
-        list.add(maxLon);
-        list.add(maxLat);
+        list.add(Helper.round6(minLon));
+        list.add(Helper.round6(minLat));
+        // hmh
+        if (elevation)
+            list.add(Helper.round2(minEle));
+
+        list.add(Helper.round6(maxLon));
+        list.add(Helper.round6(maxLat));
+        if (elevation)
+            list.add(Helper.round2(maxEle));
+
         return list;
     }
 }

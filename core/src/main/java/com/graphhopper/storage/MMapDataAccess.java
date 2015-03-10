@@ -42,11 +42,12 @@ public class MMapDataAccess extends AbstractDataAccess
     private RandomAccessFile raFile;
     private List<ByteBuffer> segments = new ArrayList<ByteBuffer>();
     private boolean cleanAndRemap = false;
-    private transient boolean closed = false;
+    private final boolean allowWrites;
 
-    MMapDataAccess( String name, String location, ByteOrder order )
+    MMapDataAccess( String name, String location, ByteOrder order, boolean allowWrites )
     {
         super(name, location, order);
+        this.allowWrites = allowWrites;
     }
 
     MMapDataAccess cleanAndRemap( boolean cleanAndRemap )
@@ -65,7 +66,7 @@ public class MMapDataAccess extends AbstractDataAccess
         try
         {
             // raFile necessary for loadExisting and create
-            raFile = new RandomAccessFile(getFullName(), "rw");
+            raFile = new RandomAccessFile(getFullName(), allowWrites ? "rw" : "r");
         } catch (IOException ex)
         {
             throw new RuntimeException(ex);
@@ -82,7 +83,7 @@ public class MMapDataAccess extends AbstractDataAccess
         initRandomAccessFile();
         bytes = Math.max(10 * 4, bytes);
         setSegmentSize(segmentSizeInBytes);
-        incCapacity(bytes);
+        ensureCapacity(bytes);
         return this;
     }
 
@@ -98,7 +99,7 @@ public class MMapDataAccess extends AbstractDataAccess
     }
 
     @Override
-    public boolean incCapacity( long bytes )
+    public boolean ensureCapacity( long bytes )
     {
         return mapIt(HEADER_OFFSET, bytes, true);
     }
@@ -134,6 +135,7 @@ public class MMapDataAccess extends AbstractDataAccess
             {
                 newSegments = segmentsToMap;
                 clean(0, segments.size());
+                Helper.cleanHack();
                 segments.clear();
             } else
             {
@@ -173,13 +175,15 @@ public class MMapDataAccess extends AbstractDataAccess
         {
             try
             {
-                buf = raFile.getChannel().map(FileChannel.MapMode.READ_WRITE, offset, byteCount);
+                buf = raFile.getChannel().map(
+                        allowWrites ? FileChannel.MapMode.READ_WRITE : FileChannel.MapMode.READ_ONLY,
+                        offset, byteCount);
                 break;
             } catch (IOException tmpex)
             {
                 ioex = tmpex;
                 trial++;
-                cleanHack();
+                Helper.cleanHack();
                 try
                 {
                     // mini sleep to let JVM do unmapping
@@ -223,8 +227,8 @@ public class MMapDataAccess extends AbstractDataAccess
         if (segments.size() > 0)
             throw new IllegalStateException("already initialized");
 
-        if (closed)
-            return false;
+        if (isClosed())
+            throw new IllegalStateException("already closed");
 
         File file = new File(getFullName());
         if (!file.exists() || file.length() == 0)
@@ -248,10 +252,9 @@ public class MMapDataAccess extends AbstractDataAccess
     @Override
     public void flush()
     {
-        if (closed)
-        {
+        if (isClosed())
             throw new IllegalStateException("already closed");
-        }
+
         try
         {
             if (!segments.isEmpty() && segments.get(0) instanceof MappedByteBuffer)
@@ -276,16 +279,21 @@ public class MMapDataAccess extends AbstractDataAccess
     @Override
     public void close()
     {
+        super.close();
+        close(true);
+    }
+
+    /**
+     * @param forceClean if true the clean hack (system.gc) will be executed and forces the system
+     * to cleanup the mmap resources. Set false if you need to close many MMapDataAccess objects.
+     */
+    void close( boolean forceClean )
+    {
         clean(0, segments.size());
         segments.clear();
         Helper.close(raFile);
-        closed = true;
-    }
-
-    private void cleanHack()
-    {
-        // trying to force the release of the mapped ByteBuffer
-        System.gc();
+        if (forceClean)
+            Helper.cleanHack();
     }
 
     @Override
@@ -302,6 +310,22 @@ public class MMapDataAccess extends AbstractDataAccess
         int bufferIndex = (int) (bytePos >>> segmentSizePower);
         int index = (int) (bytePos & indexDivisor);
         return segments.get(bufferIndex).getInt(index);
+    }
+
+    @Override
+    public final void setShort( long bytePos, short value )
+    {
+        int bufferIndex = (int) (bytePos >>> segmentSizePower);
+        int index = (int) (bytePos & indexDivisor);
+        segments.get(bufferIndex).putShort(index, value);
+    }
+
+    @Override
+    public final short getShort( long bytePos )
+    {
+        int bufferIndex = (int) (bytePos >>> segmentSizePower);
+        int index = (int) (bytePos & indexDivisor);
+        return segments.get(bufferIndex).getShort(index);
     }
 
     @Override
@@ -381,7 +405,6 @@ public class MMapDataAccess extends AbstractDataAccess
             Helper.cleanMappedByteBuffer(bb);
             segments.set(i, null);
         }
-        cleanHack();
     }
 
     @Override
@@ -398,6 +421,7 @@ public class MMapDataAccess extends AbstractDataAccess
         }
 
         clean(remainingSegNo, segments.size());
+        Helper.cleanHack();
         segments = new ArrayList<ByteBuffer>(segments.subList(0, remainingSegNo));
 
         try
@@ -424,7 +448,7 @@ public class MMapDataAccess extends AbstractDataAccess
 
         Helper.cleanMappedByteBuffer(segment);
         segments.set(segNumber, null);
-        cleanHack();
+        Helper.cleanHack();
         return true;
     }
 

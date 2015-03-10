@@ -29,10 +29,23 @@ public class BitUtilBig extends BitUtil
     }
 
     @Override
+    public final short toShort( byte[] b, int offset )
+    {
+        return (short) ((b[offset] & 0xFF) << 8 | (b[offset + 1] & 0xFF));
+    }
+
+    @Override
     public final int toInt( byte[] b, int offset )
     {
-        return (b[offset] & 0xFF) << 24 | (b[++offset] & 0xFF) << 16 | (b[++offset] & 0xFF) << 8
-                | (b[++offset] & 0xFF);
+        return (b[offset] & 0xFF) << 24 | (b[++offset] & 0xFF) << 16
+                | (b[++offset] & 0xFF) << 8 | (b[++offset] & 0xFF);
+    }
+
+    @Override
+    public void fromShort( byte[] bytes, short value, int offset )
+    {
+        bytes[offset] = (byte) (value >> 8);
+        bytes[offset + 1] = (byte) (value);
     }
 
     @Override
@@ -121,7 +134,13 @@ public class BitUtilBig extends BitUtil
      */
     final long reversePart( long v, int maxBits )
     {
-        long rest = v & (~((1 << maxBits) - 1));
+        long rest = v & (~((1L << maxBits) - 1));
         return rest | reverse(v, maxBits);
+    }
+
+    @Override
+    public String toString()
+    {
+        return "big";
     }
 }

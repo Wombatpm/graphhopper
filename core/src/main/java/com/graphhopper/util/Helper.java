@@ -24,6 +24,7 @@ import java.io.*;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
+import java.nio.charset.Charset;
 import java.security.AccessController;
 import java.security.PrivilegedActionException;
 import java.security.PrivilegedExceptionAction;
@@ -41,8 +42,11 @@ import org.slf4j.LoggerFactory;
  */
 public class Helper
 {
-    private static final DistanceCalc dce = new DistanceCalcEarth();
+    public static final DistanceCalc DIST_EARTH = new DistanceCalcEarth();
+    public static final DistanceCalc3D DIST_3D = new DistanceCalc3D();
+    public static final DistancePlaneProjection DIST_PLANE = new DistancePlaneProjection();
     private static final Logger logger = LoggerFactory.getLogger(Helper.class);
+    public static Charset UTF_CS = Charset.forName("UTF-8");
     public static final long MB = 1L << 20;
 
     public static ArrayList<Integer> tIntListToArrayList( TIntList from )
@@ -70,6 +74,15 @@ public class Helper
     static String packageToPath( Package pkg )
     {
         return pkg.getName().replaceAll("\\.", File.separator);
+    }
+
+    public static int countBitValue( int maxTurnCosts )
+    {
+        double val = Math.log(maxTurnCosts) / Math.log(2);
+        int intVal = (int) val;
+        if (val == intVal)
+            return intVal;
+        return intVal + 1;
     }
 
     private Helper()
@@ -131,7 +144,7 @@ public class Helper
 
     public static List<String> readFile( String file ) throws IOException
     {
-        return readFile(new InputStreamReader(new FileInputStream(file), "UTF-8"));
+        return readFile(new InputStreamReader(new FileInputStream(file), UTF_CS));
     }
 
     public static List<String> readFile( Reader simpleReader ) throws IOException
@@ -149,6 +162,27 @@ public class Helper
         } finally
         {
             reader.close();
+        }
+    }
+
+    public static String isToString( InputStream inputStream ) throws IOException
+    {
+        int size = 1024 * 8;
+        String encoding = "UTF-8";
+        InputStream in = new BufferedInputStream(inputStream, size);
+        try
+        {
+            byte[] buffer = new byte[size];
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            int numRead;
+            while ((numRead = in.read(buffer)) != -1)
+            {
+                output.write(buffer, 0, numRead);
+            }
+            return output.toString(encoding);
+        } finally
+        {
+            in.close();
         }
     }
 
@@ -260,7 +294,7 @@ public class Helper
         if (!graphBounds.isValid())
             throw new IllegalArgumentException("Bounding box is not valid to calculate index size: " + graphBounds);
 
-        double dist = dce.calcDist(graphBounds.maxLat, graphBounds.minLon,
+        double dist = DIST_EARTH.calcDist(graphBounds.maxLat, graphBounds.minLon,
                 graphBounds.minLat, graphBounds.maxLon);
         // convert to km and maximum is 50000km => 1GB
         dist = Math.min(dist / 1000, 50000);
@@ -271,9 +305,7 @@ public class Helper
     {
         int index = file.lastIndexOf(".");
         if (index < 0)
-        {
             return file;
-        }
         return file.substring(0, index);
     }
 
@@ -290,34 +322,29 @@ public class Helper
     public static PointList createPointList( double... list )
     {
         if (list.length % 2 != 0)
-        {
             throw new IllegalArgumentException("list should consist of lat,lon pairs!");
-        }
-        PointList res = new PointList(list.length);
+
         int max = list.length / 2;
+        PointList res = new PointList(max, false);
         for (int i = 0; i < max; i++)
         {
-            res.add(list[2 * i], list[2 * i + 1]);
+            res.add(list[2 * i], list[2 * i + 1], Double.NaN);
         }
         return res;
     }
 
-    /**
-     * Converts a double (maximum value 10000) into an integer.
-     * <p/>
-     * @return the integer to be stored
-     */
-    public static int doubleToInt( double deg )
+    public static PointList createPointList3D( double... list )
     {
-        return (int) (deg * INT_FACTOR);
-    }
+        if (list.length % 3 != 0)
+            throw new IllegalArgumentException("list should consist of lat,lon,ele tuples!");
 
-    /**
-     * Converts back the once transformed storedInt from doubleToInt
-     */
-    public static double intToDouble( int storedInt )
-    {
-        return (double) storedInt / INT_FACTOR;
+        int max = list.length / 3;
+        PointList res = new PointList(max, true);
+        for (int i = 0; i < max; i++)
+        {
+            res.add(list[3 * i], list[3 * i + 1], list[3 * i + 2]);
+        }
+        return res;
     }
 
     /**
@@ -327,8 +354,12 @@ public class Helper
      * <p/>
      * @return the integer of the specified degree
      */
-    public static int degreeToInt( double deg )
+    public static final int degreeToInt( double deg )
     {
+        if (deg >= Double.MAX_VALUE)
+            return Integer.MAX_VALUE;
+        if (deg <= -Double.MAX_VALUE)
+            return -Integer.MAX_VALUE;
         return (int) (deg * DEGREE_FACTOR);
     }
 
@@ -337,14 +368,40 @@ public class Helper
      * <p/>
      * @return the degree value of the specified integer
      */
-    public static double intToDegree( int storedInt )
+    public static final double intToDegree( int storedInt )
     {
-        // Double.longBitsToDouble();
+        if (storedInt == Integer.MAX_VALUE)
+            return Double.MAX_VALUE;
+        if (storedInt == -Integer.MAX_VALUE)
+            return -Double.MAX_VALUE;
         return (double) storedInt / DEGREE_FACTOR;
     }
+
+    /**
+     * Converts elevation value (in meters) into integer for storage.
+     */
+    public static final int eleToInt( double ele )
+    {
+        if (ele >= Integer.MAX_VALUE)
+            return Integer.MAX_VALUE;
+        return (int) (ele * ELE_FACTOR);
+    }
+
+    /**
+     * Converts the integer value retrieved from storage into elevation (in meters). Do not expect
+     * more precision than meters although it currently is!
+     */
+    public static final double intToEle( int integEle )
+    {
+        if (integEle == Integer.MAX_VALUE)
+            return Double.MAX_VALUE;
+        return integEle / ELE_FACTOR;
+    }
+
     // +- 180 and +-90 => let use use 400
     private static final float DEGREE_FACTOR = Integer.MAX_VALUE / 400f;
-    private static final float INT_FACTOR = Integer.MAX_VALUE / 10000f;
+    // milli meter is a bit extreme but we have integers
+    private static final float ELE_FACTOR = 1000f;
 
     public static void cleanMappedByteBuffer( final ByteBuffer buffer )
     {
@@ -355,12 +412,16 @@ public class Helper
                 @Override
                 public Object run() throws Exception
                 {
-                    final Method getCleanerMethod = buffer.getClass().getMethod("cleaner");
-                    getCleanerMethod.setAccessible(true);
-                    final Object cleaner = getCleanerMethod.invoke(buffer);
-                    if (cleaner != null)
+                    try
                     {
-                        cleaner.getClass().getMethod("clean").invoke(cleaner);
+                        final Method getCleanerMethod = buffer.getClass().getMethod("cleaner");
+                        getCleanerMethod.setAccessible(true);
+                        final Object cleaner = getCleanerMethod.invoke(buffer);
+                        if (cleaner != null)
+                            cleaner.getClass().getMethod("clean").invoke(cleaner);
+                    } catch (NoSuchMethodException ex)
+                    {
+                        // ignore if method cleaner or clean is not available, like on Android
                     }
                     return null;
                 }
@@ -369,6 +430,15 @@ public class Helper
         {
             throw new RuntimeException("unable to unmap the mapped buffer", e);
         }
+    }
+
+    /**
+     * Trying to force the release of the mapped ByteBuffer. See
+     * http://stackoverflow.com/q/2972986/194609 and use only if you know what you are doing.
+     */
+    public static void cleanHack()
+    {
+        System.gc();
     }
 
     public static String nf( long no )
@@ -387,5 +457,37 @@ public class Helper
         }
 
         return Character.toUpperCase(sayText.charAt(0)) + sayText.substring(1);
+    }
+
+    /**
+     * This methods returns the value or min if too small or max if too big.
+     */
+    public static final double keepIn( double value, double min, double max )
+    {
+        return Math.max(min, Math.min(value, max));
+    }
+
+    /**
+     * Round the value to the specified exponent
+     */
+    public static double round( double value, int exponent )
+    {
+        double factor = Math.pow(10, exponent);
+        return Math.round(value * factor) / factor;
+    }
+
+    public static final double round6( double value )
+    {
+        return Math.round(value * 1e6) / 1e6;
+    }
+
+    public static final double round4( double value )
+    {
+        return Math.round(value * 1e4) / 1e4;
+    }
+
+    public static final double round2( double value )
+    {
+        return Math.round(value * 100) / 100;
     }
 }

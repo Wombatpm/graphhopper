@@ -25,12 +25,11 @@ package com.graphhopper.routing.util;
 public class EncodedValue
 {
     private final String name;
-    private final long shift;
-    private final long mask;
-    private final long factor;
+    protected final long shift;
+    protected final long mask;
+    protected final double factor;
+    protected final long defaultValue;
     private final long maxValue;
-    private final long defaultValue;
-    private final boolean allowNegative;
     private final boolean allowZero;
     private final int bits;
 
@@ -44,13 +43,12 @@ public class EncodedValue
      * @param defaultValue default value
      * @param maxValue default maximum value
      */
-    public EncodedValue( String name, int shift, int bits, int factor, int defaultValue, int maxValue )
+    public EncodedValue( String name, int shift, int bits, double factor, long defaultValue, int maxValue )
     {
-        this(name, shift, bits, factor, defaultValue, maxValue, false, true);
+        this(name, shift, bits, factor, defaultValue, maxValue, true);
     }
 
-    public EncodedValue( String name, int shift, int bits, int factor, int defaultValue, int maxValue,
-            boolean allowNegative, boolean allowZero )
+    public EncodedValue( String name, int shift, int bits, double factor, long defaultValue, int maxValue, boolean allowZero )
     {
         this.name = name;
         this.shift = shift;
@@ -58,27 +56,28 @@ public class EncodedValue
         this.defaultValue = defaultValue;
         this.bits = bits;
         long tmpMask = (1L << bits) - 1;
-        long tmpMaxValue = tmpMask * factor;
-        if (maxValue > tmpMaxValue)
+        this.maxValue = Math.min(maxValue, Math.round(tmpMask * factor));
+        if (maxValue > this.maxValue)
             throw new IllegalStateException(name + " -> maxValue " + maxValue + " is too large for " + bits + " bits");
 
-        this.maxValue = maxValue;
         mask = tmpMask << shift;
-
-        this.allowNegative = allowNegative;
         this.allowZero = allowZero;
+    }
+
+    protected void checkValue( long value )
+    {
+        if (value > maxValue)
+            throw new IllegalArgumentException(name + " value too large for encoding: " + value + ", maxValue:" + maxValue);
+        if (value < 0)
+            throw new IllegalArgumentException("negative " + name + " value not allowed! " + value);
+        if (!allowZero && value == 0)
+            throw new IllegalArgumentException("zero " + name + " value not allowed! " + value);
     }
 
     public long setValue( long flags, long value )
     {
-        if (value > maxValue)
-            throw new IllegalArgumentException(name + " value too large for encoding: " + value + ", maxValue:" + maxValue);
-        if (!allowNegative && value < 0)
-            throw new IllegalArgumentException("negative " + name + " value not allowed! " + value);
-        if (!allowZero && value == 0)
-            throw new IllegalArgumentException("zero " + name + " value not allowed! " + value);
-
-        // scale down value
+        checkValue(value);
+        // scale value
         value /= factor;
         value <<= shift;
 
@@ -94,7 +93,7 @@ public class EncodedValue
         // find value
         flags &= mask;
         flags >>= shift;
-        return flags * factor;
+        return Math.round(flags * factor);
     }
 
     public int getBits()
@@ -110,5 +109,17 @@ public class EncodedValue
     public long getMaxValue()
     {
         return maxValue;
+    }
+
+    /**
+     * Swap the contents controlled by this value encoder with the given value.
+     * <p>
+     * @return the new flags
+     */
+    public long swap( long flags, EncodedValue otherEncoder )
+    {
+        long otherValue = otherEncoder.getValue(flags);
+        flags = otherEncoder.setValue(flags, getValue(flags));
+        return setValue(flags, otherValue);
     }
 }

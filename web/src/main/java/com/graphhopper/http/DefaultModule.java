@@ -17,7 +17,6 @@
  */
 package com.graphhopper.http;
 
-import com.graphhopper.search.Geocoding;
 import com.google.inject.AbstractModule;
 import com.google.inject.name.Names;
 import com.graphhopper.GraphHopper;
@@ -31,34 +30,53 @@ import org.slf4j.LoggerFactory;
  */
 public class DefaultModule extends AbstractModule
 {
-    private Logger logger = LoggerFactory.getLogger(getClass());
+    private final Logger logger = LoggerFactory.getLogger(getClass());
+    protected final CmdArgs args;
+    private GraphHopper graphHopper;
+
+    public DefaultModule( CmdArgs args )
+    {
+        this.args = CmdArgs.readFromConfigAndMerge(args, "config", "graphhopper.config");
+    }
+
+    public GraphHopper getGraphHopper()
+    {
+        if (graphHopper == null)
+            throw new IllegalStateException("createGraphHopper not called");
+
+        return graphHopper;
+    }
+
+    /**
+     * @return an initialized GraphHopper instance
+     */
+    protected GraphHopper createGraphHopper( CmdArgs args )
+    {
+        GraphHopper tmp = new GraphHopper().forServer().init(args);
+        tmp.importOrLoad();
+        logger.info("loaded graph at:" + tmp.getGraphHopperLocation()
+                + ", source:" + tmp.getOSMFile()
+                + ", flagEncoders:" + tmp.getEncodingManager()
+                + ", class:" + tmp.getGraph().getClass().getSimpleName());
+        return tmp;
+    }
 
     @Override
     protected void configure()
     {
         try
         {
-            CmdArgs args = CmdArgs.readFromConfig("config.properties", "graphhopper.config");
-            GraphHopper hopper = new GraphHopper().forServer().init(args);
-            hopper.importOrLoad();
-            logger.info("loaded graph at:" + hopper.getGraphHopperLocation()
-                    + ", source:" + hopper.getOSMFile()
-                    + ", acceptWay:" + hopper.getEncodingManager()
-                    + ", class:" + hopper.getGraph().getClass().getSimpleName());
-
-            bind(GraphHopper.class).toInstance(hopper);
-
-            String algo = args.get("routing.defaultAlgorithm", "dijkstrabi");
-            bind(String.class).annotatedWith(Names.named("defaultAlgorithm")).toInstance(algo);
+            graphHopper = createGraphHopper(args);
+            bind(GraphHopper.class).toInstance(graphHopper);
+            bind(TranslationMap.class).toInstance(graphHopper.getTranslationMap());
 
             long timeout = args.getLong("web.timeout", 3000);
             bind(Long.class).annotatedWith(Names.named("timeout")).toInstance(timeout);
-            bind(Geocoding.class).toInstance(new NominatimGeocoder().
-                    setTimeout((int) timeout).
-                    setBounds(hopper.getGraph().getBounds()));
-            bind(GHThreadPool.class).toInstance(new GHThreadPool(1000, 50).startService());
+            boolean jsonpAllowed = args.getBool("web.jsonpAllowed", false);
+            if (!jsonpAllowed)
+                logger.info("jsonp disabled");
 
-            bind(TranslationMap.class).toInstance(new TranslationMap().doImport());
+            bind(Boolean.class).annotatedWith(Names.named("jsonpAllowed")).toInstance(jsonpAllowed);
         } catch (Exception ex)
         {
             throw new IllegalStateException("Couldn't load graph", ex);

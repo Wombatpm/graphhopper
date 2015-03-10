@@ -38,4 +38,14 @@ public class EncodedValueTest
         instance = new EncodedValue("test", 0, 4, 1, 5, 10);
         assertEquals(5, instance.getValue(instance.setDefaultValue(0)));
     }
+
+    @Test
+    public void testSwap()
+    {
+        EncodedValue instance1 = new EncodedValue("test1", 0, 10, 1, 5, 1000);
+        EncodedValue instance2 = new EncodedValue("test2", 10, 10, 1, 5, 1000);
+        long flags = instance2.setValue(instance1.setValue(0, 13), 874);
+        long swappedFlags = instance1.setValue(instance2.setValue(0, 13), 874);
+        assertEquals(swappedFlags, instance1.swap(flags, instance2));
+    }
 }

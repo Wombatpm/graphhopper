@@ -17,67 +17,91 @@
  */
 package com.graphhopper;
 
-import com.graphhopper.util.shapes.GHPlace;
-import java.util.HashMap;
-import java.util.Map;
+import com.graphhopper.routing.util.WeightingMap;
+import com.graphhopper.util.Helper;
+import com.graphhopper.util.shapes.GHPoint;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 
 /**
  * GraphHopper request wrapper to simplify requesting GraphHopper.
  * <p/>
  * @author Peter Karich
+ * @author ratrun
  */
 public class GHRequest
 {
-    private String algo = "dijkstrabi";
-    private GHPlace from;
-    private GHPlace to;
-    private Map<String, Object> hints = new HashMap<String, Object>(5);
-    private String vehicle = "CAR";
-    private String weighting = "shortest";
+    private String algo = "";
+    private List<GHPoint> points;
+    private final WeightingMap hints = new WeightingMap();
+    private String vehicle = "";
+    private boolean possibleToAdd = false;
+    private Locale locale = Locale.US;
+
+    public GHRequest()
+    {
+        this(5);
+    }
+
+    public GHRequest( int size )
+    {
+        points = new ArrayList<GHPoint>(size);
+        possibleToAdd = true;
+    }
 
     /**
-     * Calculate the path from specified startPoint (fromLat, fromLon) to endPoint (toLat, toLon).
+     * Calculate the path from specified startPlace (fromLat, fromLon) to endPlace (toLat, toLon).
      */
     public GHRequest( double fromLat, double fromLon, double toLat, double toLon )
     {
-        this(new GHPlace(fromLat, fromLon), new GHPlace(toLat, toLon));
+        this(new GHPoint(fromLat, fromLon), new GHPoint(toLat, toLon));
     }
 
     /**
-     * Calculate the path from specified startPoint to endPoint.
+     * Calculate the path from specified startPlace to endPlace.
      */
-    public GHRequest( GHPlace startPoint, GHPlace endPoint )
+    public GHRequest( GHPoint startPlace, GHPoint endPlace )
     {
-        this.from = startPoint;
-        this.to = endPoint;
+        if (startPlace == null)
+            throw new IllegalStateException("'from' cannot be null");
+
+        if (endPlace == null)
+            throw new IllegalStateException("'to' cannot be null");
+        points = new ArrayList<GHPoint>(2);
+        points.add(startPlace);
+        points.add(endPlace);
     }
 
-    public void check()
+    public GHRequest( List<GHPoint> points )
     {
-        if (from == null)
-            throw new IllegalStateException("the 'from' point needs to be initialized but was null");
-
-        if (to == null)
-            throw new IllegalStateException("the 'to' point needs to be initialized but was null");
+        this.points = points;
     }
 
-    public GHPlace getFrom()
+    public GHRequest addPoint( GHPoint point )
     {
-        return from;
+        if (point == null)
+            throw new IllegalArgumentException("point cannot be null");
+        if (!possibleToAdd)
+            throw new IllegalStateException("Please call empty constructor if you intent to use "
+                    + "more than two places via addPlace method.");
+
+        points.add(point);
+        return this;
     }
 
-    public GHPlace getTo()
+    public List<GHPoint> getPoints()
     {
-        return to;
+        return points;
     }
 
     /**
-     * Possible values: astar (A* algorithm, default), astarbi (bidirectional A*) dijkstra
-     * (Dijkstra), dijkstrabi and dijkstraNative (a bit faster bidirectional Dijkstra).
+     * For possible values see AlgorithmOptions.*
      */
     public GHRequest setAlgorithm( String algo )
     {
-        this.algo = algo;
+        if (algo != null)
+            this.algo = algo;
         return this;
     }
 
@@ -86,53 +110,68 @@ public class GHRequest
         return algo;
     }
 
-    public GHRequest putHint( String key, Object value )
+    public Locale getLocale()
     {
-        Object old = hints.put(key, value);
-        if (old != null)
-            throw new RuntimeException("Key is already associated with " + old + ", your value:" + value);
+        return locale;
+    }
 
+    public GHRequest setLocale( Locale locale )
+    {
+        if (locale != null)
+            this.locale = locale;
         return this;
     }
 
-    @SuppressWarnings("unchecked")
-    public <T> T getHint( String key, T defaultValue )
+    public GHRequest setLocale( String localeStr )
     {
-        Object obj = hints.get(key);
-        if (obj == null)
-            return defaultValue;
-
-        return (T) obj;
-    }
-
-    @Override
-    public String toString()
-    {
-        return from + " " + to + " (" + algo + ")";
+        return setLocale(Helper.getLocale(localeStr));
     }
 
     /**
-     * By default it supports fastest and shortest
+     * By default it supports fastest and shortest. Or specify empty to use default.
      */
     public GHRequest setWeighting( String w )
     {
-        this.weighting = w;
+        hints.setWeighting(w);
         return this;
     }
 
     public String getWeighting()
     {
-        return weighting;
+        return hints.getWeighting();
     }
 
+    /**
+     * Specifiy car, bike or foot. Or specify empty to use default.
+     */
     public GHRequest setVehicle( String vehicle )
     {
-        this.vehicle = vehicle;
+        if (vehicle != null)
+            this.vehicle = vehicle;
         return this;
     }
 
     public String getVehicle()
     {
         return vehicle;
+    }
+
+    @Override
+    public String toString()
+    {
+        String res = "";
+        for (GHPoint point : points)
+        {
+            if (res.isEmpty())
+                res = point.toString();
+            else
+                res += "; " + point.toString();
+        }
+        return res + "(" + algo + ")";
+    }
+
+    public WeightingMap getHints()
+    {
+        return hints;
     }
 }

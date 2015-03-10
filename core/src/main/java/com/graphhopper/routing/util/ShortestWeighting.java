@@ -27,10 +27,6 @@ import com.graphhopper.util.EdgeIteratorState;
  */
 public class ShortestWeighting implements Weighting
 {
-    public ShortestWeighting()
-    {
-    }
-
     @Override
     public double getMinWeight( double currDistToGoal )
     {
@@ -38,15 +34,9 @@ public class ShortestWeighting implements Weighting
     }
 
     @Override
-    public double calcWeight( EdgeIteratorState edge )
+    public double calcWeight( EdgeIteratorState edgeState, boolean reverse, int prevOrNextEdgeId)
     {
-        return edge.getDistance();
-    }
-
-    @Override
-    public double revertWeight( EdgeIteratorState edge, double weight )
-    {
-        return weight;
+        return edgeState.getDistance();
     }
 
     @Override

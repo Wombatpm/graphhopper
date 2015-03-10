@@ -17,25 +17,43 @@
  */
 package com.graphhopper.routing.util;
 
+import com.graphhopper.util.InstructionAnnotation;
+import com.graphhopper.util.Translation;
+
 /**
  * This class provides methods to define how a value (like speed or direction) converts to a flag
  * (currently an integer value), which is stored in an edge .
  * <p/>
  * @author Peter Karich
  */
-public interface FlagEncoder
+public interface FlagEncoder extends TurnCostEncoder
 {
     /**
-     * @return the speed in km/h
+     * @return the maximum speed in km/h
      */
-    int getSpeed( long flags );
+    double getMaxSpeed();
+
+    /**
+     * @return the speed in km/h for this direction, for backward direction use getReverseSpeed
+     */
+    double getSpeed( long flags );
 
     /**
      * Sets the speed in km/h.
      * <p>
      * @return modified setProperties
      */
-    long setSpeed( long flags, int speed );
+    long setSpeed( long flags, double speed );
+
+    /**
+     * @return the speed of the reverse direction in km/h
+     */
+    double getReverseSpeed( long flags );
+
+    /**
+     * Sets the reverse speed in the flags.
+     */
+    long setReverseSpeed( long flags, double speed );
 
     /**
      * Sets the access of the edge.
@@ -49,29 +67,58 @@ public interface FlagEncoder
      * <p>
      * @return created flags
      */
-    long setProperties( int speed, boolean forward, boolean backward );
+    long setProperties( double speed, boolean forward, boolean backward );
 
+    /**
+     * Reports wether the edge is available in forward direction for a certain vehicle
+     */
     boolean isForward( long flags );
 
+    /**
+     * Reports wether the edge is available in backward direction for a certain vehicle
+     */
     boolean isBackward( long flags );
 
-    /**
-     * @return the maximum speed in km/h
+    /*
+     * Simple rules for every subclass which introduces a new key. It has to use the prefix K_ and
+     * uses a minimum value which is two magnitudes higher than in the super class. 
+     * Currently this means starting from 100, and subclasses of this class start from 10000 and so on.
      */
-    int getMaxSpeed();
+    /**
+     * Reports wether this edge is part of a roundabout.
+     */
+    static final int K_ROUNDABOUT = 2;
 
     /**
-     * Returns true if flags1 can be overwritten by flags2 without restricting or changing the
-     * directions of flags1.
+     * Returns arbitrary boolean value identified by the specified key.
      */
-    //        \  flags2:
-    // flags1  \ -> | <- | <->
-    // ->         t | f  | t
-    // <-         f | t  | t
-    // <->        f | f  | t
-    boolean canBeOverwritten( long flags1, long flags2 );
+    boolean isBool( long flags, int key );
 
-    int getPavementCode( long flags );
+    long setBool( long flags, int key, boolean value );
 
-    int getWayTypeCode( long flags );
+    /**
+     * Returns arbitrary long value identified by the specified key. E.g. can be used to return the
+     * way or surface type of an edge
+     */
+    long getLong( long flags, int key );
+
+    long setLong( long flags, int key, long value );
+
+    /**
+     * Returns arbitrary long value identified by the specified key. E.g. can be used to return the
+     * maximum width or height allowed for an edge.
+     */
+    double getDouble( long flags, int key );
+
+    long setDouble( long flags, int key, double value );
+
+    /**
+     * Returns true if the feature class is supported like TurnWeighting or PriorityWeighting.
+     */
+    public boolean supports( Class<?> feature );
+
+    /**
+     * @return additional cost or warning information for an instruction like ferry or road charges.
+     */
+    InstructionAnnotation getAnnotation( long flags, Translation tr );
 }

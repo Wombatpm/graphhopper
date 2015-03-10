@@ -18,6 +18,8 @@
 package com.graphhopper.http;
 
 import java.io.IOException;
+import javax.inject.Named;
+import javax.inject.Inject;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -33,8 +35,11 @@ import org.slf4j.LoggerFactory;
 public class GHBaseServlet extends HttpServlet
 {
     protected Logger logger = LoggerFactory.getLogger(getClass());
+    @Inject
+    @Named("jsonpAllowed")
+    private boolean jsonpAllowed;
 
-    protected void writeJson( HttpServletRequest req, HttpServletResponse res, JSONObject json ) throws JSONException
+    protected void writeJson( HttpServletRequest req, HttpServletResponse res, JSONObject json ) throws JSONException, IOException
     {
         String type = getParam(req, "type", "json");
         res.setCharacterEncoding("UTF-8");
@@ -42,7 +47,19 @@ public class GHBaseServlet extends HttpServlet
         if ("jsonp".equals(type))
         {
             res.setContentType("application/javascript");
+            if (!jsonpAllowed)
+            {
+                res.sendError(SC_BAD_REQUEST, "Server is not configured to allow jsonp!");
+                return;
+            }
+
             String callbackName = getParam(req, "callback", null);
+            if (callbackName == null)
+            {
+                res.sendError(SC_BAD_REQUEST, "No callback provided, necessary if type=jsonp");
+                return;
+            }
+
             if (debug)
             {
                 writeResponse(res, callbackName + "(" + json.toString(2) + ")");
